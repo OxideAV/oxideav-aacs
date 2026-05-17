@@ -1,0 +1,40 @@
+[package]
+name = "oxideav-aacs"
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT"
+authors = ["Mark Karpeles"]
+description = "Clean-room AACS Common 0.953 + BD-Prerecorded 0.953 decryption library — KEYDB.cfg / MKB / Unit_Key_RO.inf parsers, AES-128-CBC content scrambling, Subset-Difference tree walk, VUK derivation, Title Key unwrap"
+repository = "https://github.com/OxideAV/oxideav-aacs"
+homepage = "https://github.com/OxideAV/oxideav-aacs"
+readme = "README.md"
+keywords = ["aacs", "bluray", "drm", "decryption", "multimedia"]
+categories = ["cryptography", "multimedia"]
+
+[features]
+default = ["registry"]
+
+# `registry` wires up the `oxideav-core` Error alias so the crate plugs
+# into the broader oxideav framework. Drop it (`default-features = false`)
+# for a free-standing build that exposes a crate-local Error type and a
+# pure parsing/crypto API without the framework dependency tree.
+registry = ["dep:oxideav-core"]
+
+[dependencies]
+# Optional under the `registry` feature so consumers can use the parsers
+# and crypto primitives without pulling the framework dependency tree.
+oxideav-core = { version = "0.1", optional = true }
+
+# RustCrypto pure-Rust AES-128 (ECB block primitive). AACS-CBC is built
+# on top of `BlockEncrypt`/`BlockDecrypt` directly — we do not pull
+# `aes` mode crates because AACS-CBC and ECB-wrap need raw block access
+# with custom IV / chaining rules per Common spec §2.1.2 and
+# BD-Prerecorded §3.10.
+aes = "0.8"
+
+[dev-dependencies]
+# Synthetic disc-layout fixtures need a scratch directory. `tempfile`
+# is a widely-used third-party crate (not an oxideav-* sibling) so it
+# does not implicate the "no cross-crate dev-deps" guardrail.
+tempfile = "3"
