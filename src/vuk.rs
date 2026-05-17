@@ -26,22 +26,39 @@ pub fn derive_vuk(media_key: &[u8; 16], volume_id: &[u8; 16]) -> Vuk {
     Vuk(aes_g(media_key, volume_id))
 }
 
-/// Derive the 20-byte KEYDB.cfg disc identifier from the 16-byte AACS
-/// Volume Identifier per the de-facto libbluray convention:
-///
-/// ```text
-/// disc_id = SHA-1(volume_id)
-/// ```
+/// Derive the 20-byte KEYDB.cfg disc identifier from the bytes of the
+/// disc's on-disc unit-key file.
 ///
 /// AACS LA itself doesn't define a "disc_id" — that concept is a
-/// libbluray invention for keying off-line VUK databases. Every
-/// KEYDB.cfg in the wild uses SHA-1 of the 16-byte Volume Identifier
-/// read from the disc's BD-ROM Mark via the drive's MMC `READ DISC
-/// STRUCTURE` (format 0x80) command.
-pub fn disc_id_for_volume_id(volume_id: &[u8; 16]) -> [u8; 20] {
+/// libbluray / libaacs invention for keying off-line VUK databases.
+/// Every KEYDB.cfg in the wild uses SHA-1 of the unit-key file bytes
+/// (libaacs's `_calc_title_hash` / `aacs_get_disc_id`):
+///
+/// ```text
+/// disc_id = SHA-1(unit_key_file_bytes)
+/// ```
+///
+/// Which file gets hashed depends on the content type:
+///
+/// | Content type        | File hashed                    |
+/// |---------------------|--------------------------------|
+/// | BD-ROM BDMV         | `AACS/Unit_Key_RO.inf`         |
+/// | BD-Recordable BDMV  | `AACS_mv/Unit_Key_RW.inf`      |
+/// | BD-Recordable BDAV  | `AACS/AACS_av/Unit_Key_RW.inf` |
+/// | HD-DVD Std Audio    | `AACS/ATKF.AACS`               |
+/// | HD-DVD Std Video    | `AACS/VTKF.AACS`               |
+/// | HD-DVD Adv Audio    | `AACS/ATKF000.AACS`            |
+/// | HD-DVD Adv Video    | `AACS/VTKF000.AACS`            |
+///
+/// For BD-ROM the canonical fallback path is `AACS/DUPLICATE/Unit_Key_RO.inf`
+/// per BD-Prerecorded §2.1 (the duplicate copy mirror's content).
+///
+/// Pass the whole file's bytes — no skipping headers, no padding
+/// stripped. Libaacs hashes the file verbatim.
+pub fn disc_id_from_unit_key_file_bytes(bytes: &[u8]) -> [u8; 20] {
     use sha1::{Digest, Sha1};
     let mut h = Sha1::new();
-    h.update(volume_id);
+    h.update(bytes);
     let d = h.finalize();
     let mut out = [0u8; 20];
     out.copy_from_slice(&d);
