@@ -137,11 +137,23 @@ impl Mkb {
 
         while !bytes.is_empty() {
             if bytes.len() < 4 {
-                return Err(AacsError::Truncated("MKB record header"));
+                // Trailing 1-3 bytes after the last record — treat as
+                // sector-padding zero-fill, not a parse error.
+                break;
             }
             let tag = bytes[0];
             let length = (u32::from_be_bytes([0, bytes[1], bytes[2], bytes[3]])) as usize;
             if length < 4 {
+                // A zero-length record header is how real MKB files
+                // signal end-of-stream when the MKB itself is shorter
+                // than the on-disc file (sector-aligned tail padding).
+                // If we've already seen the End-of-MKB record (tag
+                // 0x02) just stop quietly. Otherwise also stop, but
+                // only as long as the rest of the buffer is all-zero
+                // padding — anything else is malformed.
+                if out.end_of_block || bytes.iter().all(|&b| b == 0) {
+                    break;
+                }
                 return Err(AacsError::InvalidValue {
                     what: "MKB record length",
                     value: length as u64,
@@ -411,12 +423,34 @@ mod tests {
     }
 
     #[test]
-    fn rejects_truncated_header() {
-        let bytes = vec![0x10, 0x00, 0x00]; // 3 bytes; not enough for a header
+    fn truncated_header_silently_stops_then_missing_type_record_fires() {
+        // 3 bytes; not enough for a header. Per the "tolerate
+        // sector-aligned tail padding" rule, the parser stops
+        // quietly and surfaces the (more useful) missing-type-record
+        // error on the way out.
+        let bytes = vec![0x10, 0x00, 0x00];
         assert!(matches!(
             Mkb::parse(&bytes),
-            Err(AacsError::Truncated("MKB record header"))
+            Err(AacsError::MissingTypeAndVersionRecord)
         ));
+    }
+
+    /// Real-world MKB files are sector-padded with trailing zeros
+    /// after the End-of-MKB record (tag 0x02). The parser must
+    /// accept that padding rather than rejecting it as a record
+    /// with length=0.
+    #[test]
+    fn accepts_zero_padding_after_end_of_block() {
+        let mut bytes = Vec::new();
+        // Type+Version record (tag=0x10, minimal payload).
+        bytes.extend_from_slice(&[0x10, 0x00, 0x00, 0x0C]); // length 12 = header + 8-byte payload
+        bytes.extend_from_slice(&[0; 8]); // padding payload (mkb_type, version_number)
+        // End-of-MKB record (tag=0x02, length 4 = header only).
+        bytes.extend_from_slice(&[0x02, 0x00, 0x00, 0x04]);
+        // Sector-aligned trailing zeros.
+        bytes.extend_from_slice(&[0; 32]);
+        let mkb = Mkb::parse(&bytes).expect("zero-padding tail must be accepted");
+        assert!(mkb.end_of_block);
     }
 
     #[test]

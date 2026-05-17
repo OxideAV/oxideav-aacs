@@ -56,11 +56,16 @@ pub struct KeyDb {
 impl KeyDb {
     /// Parse a KEYDB.cfg byte stream from a `&str`.
     ///
-    /// Lines that do not parse are not silently dropped: the first
-    /// parse failure returns [`AacsError::KeyDbParseError`] with the
-    /// offending line (truncated to 80 chars).
+    /// Real-world KEYDB.cfg files mix many ad-hoc line forms — banner
+    /// comments, Processing Key records, custom header lines from
+    /// AnyDVD/MakeMKV exports, etc. — that aren't strict
+    /// `<disc_id> = ...` rows. We skip lines we can't parse rather
+    /// than failing the whole load on the first one. Set
+    /// `OXIDEAV_AACS_DEBUG=1` to surface each skip on stderr.
     pub fn parse(text: &str) -> Result<Self, AacsError> {
+        let debug = std::env::var_os("OXIDEAV_AACS_DEBUG").is_some();
         let mut out = Self::default();
+        let mut skipped = 0usize;
         for raw in text.lines() {
             // Strip `;` comments to end-of-line.
             let line = match raw.find(';') {
@@ -71,8 +76,24 @@ impl KeyDb {
             if line.is_empty() {
                 continue;
             }
-            let entry = parse_line(line)?;
-            out.by_disc_id.insert(entry.disc_id, entry);
+            match parse_line(line) {
+                Ok(entry) => {
+                    out.by_disc_id.insert(entry.disc_id, entry);
+                }
+                Err(e) => {
+                    skipped += 1;
+                    if debug {
+                        eprintln!("oxideav-aacs: KEYDB.cfg skipped line — {e}");
+                    }
+                }
+            }
+        }
+        if debug {
+            eprintln!(
+                "oxideav-aacs: KEYDB.cfg parse — kept {} entries, skipped {} unparseable lines",
+                out.by_disc_id.len(),
+                skipped
+            );
         }
         Ok(out)
     }
@@ -366,32 +387,27 @@ mod tests {
         assert_eq!(db.len(), 1);
     }
 
+    /// Real-world KEYDB.cfg files mix free-form banner lines,
+    /// Processing Key records, and exporter-specific metadata that
+    /// don't match our `<id> = V <vuk>` shape. We skip those rather
+    /// than failing the whole load on the first bad line (the
+    /// `OXIDEAV_AACS_DEBUG=1` env var surfaces each skip on stderr).
     #[test]
-    fn rejects_malformed_line() {
-        // Wrong number of hex chars for disc id.
-        let text = "00 = V 0102030405060708090A0B0C0D0E0F10";
-        assert!(matches!(
-            KeyDb::parse(text),
-            Err(AacsError::KeyDbParseError(_))
-        ));
-    }
-
-    #[test]
-    fn rejects_wrong_tag() {
-        let text = "0123456789ABCDEF0123456789ABCDEF01234567 = X 0102030405060708090A0B0C0D0E0F10";
-        assert!(matches!(
-            KeyDb::parse(text),
-            Err(AacsError::KeyDbParseError(_))
-        ));
-    }
-
-    #[test]
-    fn rejects_wrong_vuk_length() {
-        let text = "0123456789ABCDEF0123456789ABCDEF01234567 = V 0102";
-        assert!(matches!(
-            KeyDb::parse(text),
-            Err(AacsError::KeyDbParseError(_))
-        ));
+    fn skips_malformed_lines_without_failing_the_load() {
+        let text = r#"
+; banner
+00 = V 0102030405060708090A0B0C0D0E0F10
+0123456789ABCDEF0123456789ABCDEF01234567 = X 0102030405060708090A0B0C0D0E0F10
+0123456789ABCDEF0123456789ABCDEF01234567 = V 0102
+0123456789ABCDEF0123456789ABCDEF01234567 = V CAFEBABE0102030405060708090A0B0C | OK
+"#;
+        let db = KeyDb::parse(text).unwrap();
+        // Only the last line is well-formed.
+        assert_eq!(db.len(), 1);
+        let id = parse_hex_array_20("0123456789ABCDEF0123456789ABCDEF01234567").unwrap();
+        let entry = db.entry_for_disc(&id).unwrap();
+        assert_eq!(entry.vuk.as_bytes()[0], 0xCA);
+        assert_eq!(entry.label.as_deref(), Some("OK"));
     }
 
     /// Extended libbluray/aacskeys format: `0x`-prefixed disc-id +
