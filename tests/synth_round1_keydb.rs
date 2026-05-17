@@ -1,6 +1,6 @@
 //! KEYDB.cfg parser integration tests — synthetic fixtures only.
 
-use oxideav_aacs::{AacsError, KeyDb};
+use oxideav_aacs::KeyDb;
 
 fn parse_disc_id(s: &str) -> [u8; 20] {
     assert_eq!(s.len(), 40);
@@ -59,23 +59,20 @@ fn ignores_purely_blank_input() {
 }
 
 #[test]
-fn rejects_malformed_disc_id() {
-    // Disc ID is too short.
+fn skips_malformed_disc_id() {
+    // Disc ID is too short — line silently skipped so the rest of
+    // the file can still load. Empty db => no entries kept.
     let text = "00 = V 0102030405060708090A0B0C0D0E0F10";
-    assert!(matches!(
-        KeyDb::parse(text),
-        Err(AacsError::KeyDbParseError(_))
-    ));
+    let db = KeyDb::parse(text).unwrap();
+    assert!(db.is_empty());
 }
 
 #[test]
-fn rejects_malformed_vuk() {
-    // VUK has a non-hex character.
+fn skips_malformed_vuk() {
+    // VUK has a non-hex character — same skip semantics.
     let text = "0000000000000000000000000000000000000001 = V GG02030405060708090A0B0C0D0E0F10";
-    assert!(matches!(
-        KeyDb::parse(text),
-        Err(AacsError::KeyDbParseError(_))
-    ));
+    let db = KeyDb::parse(text).unwrap();
+    assert!(db.is_empty());
 }
 
 #[test]

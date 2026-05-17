@@ -445,7 +445,7 @@ mod tests {
         // Type+Version record (tag=0x10, minimal payload).
         bytes.extend_from_slice(&[0x10, 0x00, 0x00, 0x0C]); // length 12 = header + 8-byte payload
         bytes.extend_from_slice(&[0; 8]); // padding payload (mkb_type, version_number)
-        // End-of-MKB record (tag=0x02, length 4 = header only).
+                                          // End-of-MKB record (tag=0x02, length 4 = header only).
         bytes.extend_from_slice(&[0x02, 0x00, 0x00, 0x04]);
         // Sector-aligned trailing zeros.
         bytes.extend_from_slice(&[0; 32]);
