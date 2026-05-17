@@ -77,14 +77,17 @@ impl KeyDb {
         Self::parse(&text)
     }
 
-    /// Load KEYDB.cfg from the default XDG search path.
+    /// Load KEYDB.cfg from the default per-platform search path.
     ///
     /// Search order:
     /// 1. `$OXIDEAV_AACS_KEYDB` if set.
-    /// 2. `$XDG_CONFIG_HOME/aacs/KEYDB.cfg`.
-    /// 3. Each entry in `$XDG_CONFIG_DIRS` (`:`-split) +
+    /// 2. macOS only: `$HOME/Library/Preferences/aacs/KEYDB.cfg` —
+    ///    the native macOS user-defaults location libbluray + similar
+    ///    tools use on Apple platforms.
+    /// 3. `$XDG_CONFIG_HOME/aacs/KEYDB.cfg`.
+    /// 4. Each entry in `$XDG_CONFIG_DIRS` (`:`-split) +
     ///    `aacs/KEYDB.cfg`.
-    /// 4. `$HOME/.config/aacs/KEYDB.cfg`.
+    /// 5. `$HOME/.config/aacs/KEYDB.cfg`.
     ///
     /// Returns `Err(MissingDiscFile)` if no candidate exists.
     pub fn load_default() -> Result<Self, AacsError> {
@@ -128,6 +131,18 @@ fn default_search_paths() -> Vec<std::path::PathBuf> {
     if let Ok(p) = std::env::var("OXIDEAV_AACS_KEYDB") {
         if !p.is_empty() {
             out.push(PathBuf::from(p));
+        }
+    }
+    #[cfg(target_os = "macos")]
+    if let Ok(home) = std::env::var("HOME") {
+        if !home.is_empty() {
+            out.push(
+                PathBuf::from(&home)
+                    .join("Library")
+                    .join("Preferences")
+                    .join("aacs")
+                    .join("KEYDB.cfg"),
+            );
         }
     }
     if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
@@ -287,5 +302,41 @@ mod tests {
             KeyDb::parse(text),
             Err(AacsError::KeyDbParseError(_))
         ));
+    }
+
+    /// On macOS, `default_search_paths()` includes the native
+    /// `~/Library/Preferences/aacs/KEYDB.cfg` location ahead of the
+    /// XDG fallbacks, so users don't have to set `XDG_CONFIG_HOME`
+    /// just to be found by `KeyDb::load_default`.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_library_preferences_is_in_search_path() {
+        // Pin HOME to a deterministic value so this test doesn't depend
+        // on the runner's $HOME (CI sets it to /Users/runner; dev box
+        // sets it to /Users/<name>; either is fine as long as the
+        // produced path joins through Library/Preferences/aacs/).
+        let saved_home = std::env::var_os("HOME");
+        std::env::set_var("HOME", "/Users/oxideav-test");
+        // Also clear OXIDEAV_AACS_KEYDB so it doesn't push to the front
+        // and shadow the macOS entry from the search order.
+        let saved_env = std::env::var_os("OXIDEAV_AACS_KEYDB");
+        std::env::remove_var("OXIDEAV_AACS_KEYDB");
+
+        let paths = default_search_paths();
+        let want =
+            std::path::PathBuf::from("/Users/oxideav-test/Library/Preferences/aacs/KEYDB.cfg");
+        assert!(
+            paths.contains(&want),
+            "macOS search path missing Library/Preferences entry: {paths:?}",
+        );
+
+        // Restore env so neighbour tests don't see the change.
+        match saved_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        if let Some(v) = saved_env {
+            std::env::set_var("OXIDEAV_AACS_KEYDB", v);
+        }
     }
 }

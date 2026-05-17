@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- macOS-native search path: `KeyDb::load_default()` now also probes
+  `$HOME/Library/Preferences/aacs/KEYDB.cfg` ahead of the XDG fallbacks
+  on `target_os = "macos"`. Matches the convention libbluray + similar
+  tools use on Apple platforms — users no longer need to set
+  `XDG_CONFIG_HOME` (or fall back to `~/.config/aacs/`) just to be
+  found.
+
 ### Added — Round 1 (bootstrap, clean-room AACS Common + BD-Prerecorded 0.953)
 
 Initial pure-Rust AACS decryption library. All spec references are to
