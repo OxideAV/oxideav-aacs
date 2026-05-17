@@ -26,6 +26,28 @@ pub fn derive_vuk(media_key: &[u8; 16], volume_id: &[u8; 16]) -> Vuk {
     Vuk(aes_g(media_key, volume_id))
 }
 
+/// Derive the 20-byte KEYDB.cfg disc identifier from the 16-byte AACS
+/// Volume Identifier per the de-facto libbluray convention:
+///
+/// ```text
+/// disc_id = SHA-1(volume_id)
+/// ```
+///
+/// AACS LA itself doesn't define a "disc_id" — that concept is a
+/// libbluray invention for keying off-line VUK databases. Every
+/// KEYDB.cfg in the wild uses SHA-1 of the 16-byte Volume Identifier
+/// read from the disc's BD-ROM Mark via the drive's MMC `READ DISC
+/// STRUCTURE` (format 0x80) command.
+pub fn disc_id_for_volume_id(volume_id: &[u8; 16]) -> [u8; 20] {
+    use sha1::{Digest, Sha1};
+    let mut h = Sha1::new();
+    h.update(volume_id);
+    let d = h.finalize();
+    let mut out = [0u8; 20];
+    out.copy_from_slice(&d);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

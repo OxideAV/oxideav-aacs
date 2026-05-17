@@ -33,6 +33,10 @@ oxideav-core = { version = "0.1", optional = true }
 # BD-Prerecorded §3.10.
 aes = "0.8"
 
+# Pure-Rust SHA-1, used by `disc_id_for_volume_id` per the libbluray
+# KEYDB.cfg convention: disc_id = SHA-1(AACS Volume Identifier).
+sha1 = "0.10"
+
 [dev-dependencies]
 # Synthetic disc-layout fixtures need a scratch directory. `tempfile`
 # is a widely-used third-party crate (not an oxideav-* sibling) so it
