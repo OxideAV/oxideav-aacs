@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.2](https://github.com/OxideAV/oxideav-aacs/compare/v0.0.1...v0.0.2) - 2026-05-17
+
+### Other
+
+- parse the extended libbluray/aacskeys KEYDB.cfg format
+- probe ~/Library/Preferences/aacs/KEYDB.cfg on macOS
+
 ### Added
 
 - macOS-native search path: `KeyDb::load_default()` now also probes
