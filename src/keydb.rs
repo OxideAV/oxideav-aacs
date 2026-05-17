@@ -37,8 +37,14 @@ pub struct KeyDbEntry {
     pub disc_id: [u8; 20],
     /// 16-byte Volume Unique Key.
     pub vuk: Vuk,
-    /// Optional free-form label (everything after `|`, trimmed).
+    /// Optional free-form label.
     pub label: Option<String>,
+    /// Optional pre-unwrapped CPS Unit Title Keys, indexed by CPS
+    /// Unit number (1-based). Present when the source KEYDB.cfg
+    /// line was in the extended libbluray/aacskeys format with
+    /// `U | 1-0x<key> | 2-0x<key> | ...` tokens — lets the consumer
+    /// skip the VUK→title-key AES-ECB unwrap step entirely.
+    pub unit_keys: Vec<(u16, [u8; 16])>,
 }
 
 /// In-memory KEYDB.cfg database.
@@ -170,39 +176,123 @@ fn default_search_paths() -> Vec<std::path::PathBuf> {
     out
 }
 
+/// Parse one KEYDB.cfg line. Tolerates both the simple form
+///
+/// ```text
+/// <DISC_ID 40 hex> = V <VUK 32 hex> | <label>
+/// ```
+///
+/// and the extended libbluray/aacskeys form (with optional `0x`
+/// prefixes on every hex value, multiple `|`-separated tokens, and
+/// single-char flag tokens `D`/`M`/`I`/`V`/`U` that introduce the
+/// next value):
+///
+/// ```text
+/// 0x<DISC_ID> = <name> | D | <date> | M | 0x<MK> | I | 0x<VOL_ID>
+///             | V | 0x<VUK> | U | 1-0x<UK1> | 2-0x<UK2> | ... ; <comment>
+/// ```
 fn parse_line(line: &str) -> Result<KeyDbEntry, AacsError> {
-    // Split on `=` first.
     let (disc_id_text, rhs) = match line.split_once('=') {
         Some(parts) => parts,
         None => return Err(make_parse_err(line)),
     };
-    let disc_id = parse_hex_array_20(disc_id_text.trim())?;
+    let disc_id_text = strip_hex_prefix(disc_id_text.trim());
+    let disc_id = parse_hex_array_20(disc_id_text)?;
 
-    // RHS: "V <vuk_hex>" optionally followed by "| label". Tolerate
-    // any amount of whitespace.
-    let rhs = rhs.trim();
-    let mut tokens = rhs.splitn(2, char::is_whitespace);
-    let tag = tokens.next().ok_or_else(|| make_parse_err(line))?;
-    if !tag.eq_ignore_ascii_case("V") {
-        return Err(make_parse_err(line));
+    // Tokenise the RHS on `|`. Each pipe-token may carry one or two
+    // sub-tokens (whitespace-separated): either `<FLAG> <VALUE>`
+    // (e.g. simple form `V 0102...`), `<FLAG>` alone with the value
+    // in the NEXT pipe-token (extended libbluray form), `<VALUE>`
+    // alone (claimed by the most recent flag), or a `<id>-0x<key>`
+    // Unit-Key entry. Single-char flags D/M/I/V/U set the state
+    // machine; non-flag/non-key tokens accumulate into `label`.
+    let pipe_tokens: Vec<&str> = rhs.split('|').map(str::trim).collect();
+    let mut vuk_bytes: Option<[u8; 16]> = None;
+    let mut unit_keys: Vec<(u16, [u8; 16])> = Vec::new();
+    let mut label_parts: Vec<String> = Vec::new();
+    let mut current_flag: Option<char> = None;
+    for ptok in pipe_tokens {
+        if ptok.is_empty() {
+            continue;
+        }
+        // Split off a leading single-char flag (D/M/I/V/U,
+        // case-insensitive). Everything else is the "value", which
+        // is claimed by the current flag state (or accumulated into
+        // label if no flag is active).
+        fn is_flag_word(s: &str) -> bool {
+            s.len() == 1
+                && matches!(
+                    s.as_bytes()[0],
+                    b'D' | b'M' | b'I' | b'V' | b'U' | b'd' | b'm' | b'i' | b'v' | b'u'
+                )
+        }
+        let (head, value): (&str, &str) = if let Some(idx) = ptok.find(char::is_whitespace) {
+            let candidate = &ptok[..idx];
+            if is_flag_word(candidate) {
+                (candidate, ptok[idx..].trim())
+            } else {
+                ("", ptok)
+            }
+        } else if is_flag_word(ptok) {
+            (ptok, "")
+        } else {
+            ("", ptok)
+        };
+        if !head.is_empty() {
+            current_flag = head.chars().next().map(|c| c.to_ascii_uppercase());
+        }
+        if value.is_empty() {
+            continue;
+        }
+        match current_flag {
+            Some('V') => {
+                let raw = strip_hex_prefix(value);
+                if raw.len() == 32 {
+                    vuk_bytes = Some(parse_hex_array_16(raw)?);
+                }
+                current_flag = None;
+            }
+            Some('U') => {
+                if let Some((id_str, key_str)) = value.split_once('-') {
+                    let key_str = strip_hex_prefix(key_str.trim());
+                    if let (Ok(id), Ok(key)) =
+                        (id_str.trim().parse::<u16>(), parse_hex_array_16(key_str))
+                    {
+                        unit_keys.push((id, key));
+                    }
+                }
+                // Stay in U state — next pipe-token may be another unit key.
+            }
+            Some(_) => {
+                // D / M / I value — recognised but not stored.
+                current_flag = None;
+            }
+            None => {
+                label_parts.push(value.to_string());
+            }
+        }
     }
-    let rest = tokens.next().ok_or_else(|| make_parse_err(line))?.trim();
 
-    // Split off the optional `| label` suffix.
-    let (vuk_text, label) = match rest.split_once('|') {
-        Some((k, l)) => (
-            k.trim(),
-            Some(l.trim().to_string()).filter(|s| !s.is_empty()),
-        ),
-        None => (rest, None),
+    let vuk_bytes = vuk_bytes.ok_or_else(|| make_parse_err(line))?;
+    let label = if label_parts.is_empty() {
+        None
+    } else {
+        Some(label_parts.join(" | "))
     };
-    let vuk_bytes = parse_hex_array_16(vuk_text)?;
 
     Ok(KeyDbEntry {
         disc_id,
         vuk: Vuk::from_bytes(vuk_bytes),
         label,
+        unit_keys,
     })
+}
+
+/// Strip a leading `0x` or `0X` if present. Tolerant of empty.
+fn strip_hex_prefix(s: &str) -> &str {
+    s.strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .unwrap_or(s)
 }
 
 fn parse_hex_array_20(text: &str) -> Result<[u8; 20], AacsError> {
@@ -302,6 +392,50 @@ mod tests {
             KeyDb::parse(text),
             Err(AacsError::KeyDbParseError(_))
         ));
+    }
+
+    /// Extended libbluray/aacskeys format: `0x`-prefixed disc-id +
+    /// pipe-tokenised single-char flags (D/M/I/V/U) introducing each
+    /// value, plus `<id>-0x<hex>` Unit Keys after `U`. Tolerated for
+    /// compatibility with the de-facto community KEYDB.cfg files
+    /// users already maintain for libbluray/makemkv.
+    #[test]
+    fn parses_extended_libbluray_format() {
+        let text = "0x0123456789ABCDEF0123456789ABCDEF01234567 = Test Title \
+                    | D | 2017-10-12 \
+                    | M | 0x6D6284E100C23949F40559732EA541CE \
+                    | I | 0x3E91BD640F849EA14131E70B818A5182 \
+                    | V | 0xD8C278536EE614B877FCF3E4DD631091 \
+                    | U | 1-0xC8702051C53A11F873EF5851737E6B75 \
+                    ; trailing comment";
+        let db = KeyDb::parse(text).unwrap();
+        assert_eq!(db.len(), 1);
+        let id = parse_hex_array_20("0123456789ABCDEF0123456789ABCDEF01234567").unwrap();
+        let entry = db.entry_for_disc(&id).unwrap();
+        assert_eq!(entry.vuk.as_bytes()[0], 0xD8);
+        assert_eq!(entry.vuk.as_bytes()[15], 0x91);
+        assert_eq!(entry.unit_keys.len(), 1);
+        assert_eq!(entry.unit_keys[0].0, 1);
+        assert_eq!(entry.unit_keys[0].1[0], 0xC8);
+        assert_eq!(entry.unit_keys[0].1[15], 0x75);
+        assert_eq!(entry.label.as_deref(), Some("Test Title"));
+    }
+
+    /// Multiple Unit Keys in one extended line.
+    #[test]
+    fn parses_extended_with_multiple_unit_keys() {
+        let text = "0x0123456789ABCDEF0123456789ABCDEF01234567 = X \
+                    | V | 0x0102030405060708090A0B0C0D0E0F10 \
+                    | U | 1-0x11111111111111111111111111111111 \
+                    | 2-0x22222222222222222222222222222222 \
+                    | 3-0x33333333333333333333333333333333";
+        let db = KeyDb::parse(text).unwrap();
+        let id = parse_hex_array_20("0123456789ABCDEF0123456789ABCDEF01234567").unwrap();
+        let entry = db.entry_for_disc(&id).unwrap();
+        assert_eq!(entry.unit_keys.len(), 3);
+        assert_eq!(entry.unit_keys[0], (1, [0x11; 16]));
+        assert_eq!(entry.unit_keys[1], (2, [0x22; 16]));
+        assert_eq!(entry.unit_keys[2], (3, [0x33; 16]));
     }
 
     /// On macOS, `default_search_paths()` includes the native
