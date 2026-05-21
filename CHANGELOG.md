@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Phase A: KEYDB.cfg `|`-leader header records
+
+`KeyDb::parse` now recognises the `|`-leader record form documented in
+`docs/container/aacs/keydb-cfg-format.md`, in addition to the
+pre-existing per-disc `<DISC_ID>=V <VUK>` lines. New record types:
+
+- `| DK |` Device Key (`DEVICE_KEY` + `DEVICE_NODE` + `KEY_UV` +
+  `KEY_U_MASK_SHIFT`) — pins a key into the AACS Subset-Difference
+  tree. Surfaced via `KeyDb::device_keys()`.
+- `| PK |` Processing Key (16-byte AES-128) — the SD-tree walk output
+  for a specific MKB. Surfaced via `KeyDb::processing_keys()`.
+- `| HC |` Host Certificate + private key — 20-byte ECDSA-secp160r1
+  scalar + variable-length signed cert. Parser validates the embedded
+  `length` field (cert offset 2..4, big-endian) against the actual
+  buffer length per AACS Common Final 0.953 §A.1; exposes `host_id()`,
+  `cert_type()`, `declared_length()`. Surfaced via
+  `KeyDb::host_certs()`.
+- `| DC |` Drive Certificate + private key (drive side of the
+  Drive-Host auth). Surfaced via `KeyDb::drive_certs()`.
+- `| DISCID |` introduces a per-disc record-set scope; subsequent
+  `| VID |`, `| VUK |`, `| MEK |`, `| TK |`, `| KCD |` rows attach to
+  it. Surfaced as `DiscRecords` via `KeyDb::disc_records()` /
+  `KeyDb::disc_record(&id)`.
+
+`KeyDb::vuk_for_disc` now also looks through the `DISCID`-scoped
+record map, so both legacy and `|`-leader files yield the same lookup
+behaviour.
+
+New `AacsError::HeaderParseError(String)` variant for malformed
+`|`-leader lines.
+
+Legacy per-disc lines continue to parse byte-identically (a dedicated
+`legacy_only_file_unchanged` unit test pins this).
+
 ## [0.1.0](https://github.com/OxideAV/oxideav-aacs/compare/v0.0.1...v0.0.2) - 2026-05-17
 
 ### Other

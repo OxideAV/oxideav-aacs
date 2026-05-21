@@ -64,6 +64,14 @@ pub enum AacsError {
     /// best-effort excerpt of the offending text (truncated to 80
     /// chars) for diagnostics.
     KeyDbParseError(String),
+    /// A KEYDB.cfg `|`-leader header line (one of `DK` / `PK` / `HC`
+    /// / `DC` / `VID` / `VUK` / `MEK` / `TK` / `KCD` / `DISCID`) was
+    /// malformed: wrong number of fields, hex value with the wrong
+    /// byte-count for that field, malformed hex literal, or an
+    /// unrecognised leader token. The string carries a best-effort
+    /// excerpt of the offending line (truncated to 80 chars) plus a
+    /// short description.
+    HeaderParseError(String),
 }
 
 impl fmt::Display for AacsError {
@@ -99,6 +107,7 @@ impl fmt::Display for AacsError {
                 write!(f, "Aligned Unit must be exactly 6144 bytes; got {n} bytes")
             }
             Self::KeyDbParseError(line) => write!(f, "KEYDB.cfg parse error near: {line:?}"),
+            Self::HeaderParseError(msg) => write!(f, "KEYDB.cfg header parse error: {msg}"),
         }
     }
 }

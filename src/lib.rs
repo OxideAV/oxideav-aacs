@@ -44,7 +44,9 @@ pub mod vuk;
 
 pub use crate::content::{decrypt_aligned_unit, encrypt_aligned_unit, ALIGNED_UNIT_SIZE};
 pub use crate::error::AacsError;
-pub use crate::keydb::KeyDb;
+pub use crate::keydb::{
+    DeviceKeyRecord, DiscRecords, DriveCertRecord, HostCertRecord, KeyDb, KeyDbEntry, ProcessingKey,
+};
 pub use crate::mkb::{Mkb, MkbType, RevocationEntry, SubsetDifferenceEntry};
 pub use crate::subdiff::{aes_g3, applies_to_device, derive_processing_key, SubsetDifference};
 pub use crate::unit_key::{CpsUnitRecord, UnitKeyFile, UnitKeyFileHeader};
