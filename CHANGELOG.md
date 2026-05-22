@@ -7,6 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Phase B: SCSI MMC drive-command wire layer
+
+New `mmc` module implementing the byte-level encoding/parsing for the
+three SCSI MMC commands an AACS host needs to converse with a Licensed
+Drive. Wire formats are taken from the publicly-hosted T10 working
+drafts now staged at `docs/container/aacs/mmc/` (MMC-6 r02g, SPC-3 r23)
+cross-referenced against AACS Common Final 0.953 §4.1–§4.14. No
+external library source (libaacs / libbluray / etc.) was consulted.
+
+- **Typed CDB constructors**, each emitting a 12-byte `[u8; 12]` block
+  per MMC-6 Tables 381 / 513 / 599:
+  - `ReportKey::{aacs_agid, aacs_drive_cert_challenge,
+    aacs_drive_key, aacs_drive_cert, aacs_invalidate_agid}`.
+  - `SendKey::{aacs_host_cert_challenge, aacs_host_key,
+    aacs_invalidate_agid}`.
+  - `ReadDiscStructure::{aacs_volume_id, aacs_media_serial,
+    aacs_media_key_block_pack}`.
+  - `parse_cdb()` inverse for each, used by the synthetic mock drive
+    and by tests.
+- **AACS sub-payload codecs** for the AKE round-trip:
+  - `parse_report_key_agid` / `parse_report_key_drive_cert_chal` /
+    `parse_report_key_drive_key` / `parse_report_key_drive_cert` —
+    drive-to-host responses per AACS Common Tables 4-7, 4-8, 4-9 and
+    MMC-6 Table 531.
+  - `parse_volume_id_response` — 36-byte READ DISC STRUCTURE
+    Format 0x80 reply per AACS Common Table 4-15
+    (`[u16=0x0022][rsvd:u16][Volume ID:16][MAC:16]`).
+  - `build_send_key_host_cert_chal` / `build_send_key_host_key` and
+    their `parse_*` inverses — host-to-drive parameter lists per
+    AACS Common Tables 4-24, 4-25 (`Hn || Cert_h` and `Hv || Hsig`
+    respectively).
+- **`DriveCommand` trait** abstracting the SCSI pass-through surface
+  so platform-specific back-ends (macOS `IOSCSITaskDeviceInterface`,
+  Linux `SG_IO`, Windows `IOCTL_SCSI_PASS_THROUGH_DIRECT`) can be
+  written against a single contract once Phase C lands. Carries a
+  `DataDirection` enum + `ScsiResponse { status, data }`.
+- **`MockDrive`** in-process fixture implementing `DriveCommand`,
+  populated with a deterministic synthetic Drive Certificate /
+  Volume ID / nonces so tests can assert exact byte layouts.
+
+Public re-exports added to `lib.rs` (`mmc` module + the typed
+structures and parsers).
+
+### Documentation gaps surfaced
+
+- The workspace `docs/container/aacs/mmc/README.md` "AACS commands at
+  a glance" section confuses two different command surfaces: it lists
+  AACS Volume ID under "REPORT KEY Key Class=0x02 Key Format 0x12",
+  but per MMC-6 Table 525 the REPORT KEY Key Class 0x02 Key Format
+  table only defines 0x00 / 0x01 / 0x02 / 0x20 / 0x21 / 0x38 / 0x3F.
+  The Volume Identifier in fact ships via `READ_DISC_STRUCTURE`
+  Format Code 0x80 (MMC-6 Table 384 / AACS Common Table 4-15). This
+  Phase B implementation follows the spec tables; the README would
+  benefit from a follow-up edit clarifying which list belongs to
+  which command.
+
+### Tests
+
+- 5 new `mmc` unit tests pinning the CDB byte layouts (opcode, Key
+  Class, Allocation/Parameter-List Length packing, AGID bit packing).
+- 13 new `tests/synth_phaseb_mmc.rs` integration tests round-tripping
+  the AGID / Drive Cert Challenge / Drive Key / Drive Cert /
+  Host Cert Challenge / Host Key / Volume ID / Invalidate-AGID flows
+  through `MockDrive`.
+
+### Out of scope (deferred to Phase C/D)
+
+- ECDSA-secp160r1 sign/verify primitives needed for the cryptographic
+  half of the AKE (Common spec §4.3 steps 9, 16, 18, 25, 27).
+- `AES_G` / SHA-1-based Bus Key derivation from `Hk*Dv` / `Dk*Hv`.
+- Actual hardware transport: macOS IOKit, Linux SG_IO, Windows IOCTL
+  back-ends implementing `DriveCommand` against a real `/dev/sr0` /
+  `IOSCSITaskDeviceInterface` / `IOCTL_SCSI_PASS_THROUGH_DIRECT`.
+- Phase D: wiring the AKE + Bus-Key-protected reads into
+  `oxideav-bluray` for unencrypted-at-rest disc playback.
+
 ### Added — Phase A: KEYDB.cfg `|`-leader header records
 
 `KeyDb::parse` now recognises the `|`-leader record form documented in

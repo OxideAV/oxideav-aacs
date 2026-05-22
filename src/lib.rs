@@ -37,6 +37,7 @@ pub mod content;
 pub mod error;
 pub mod keydb;
 pub mod mkb;
+pub mod mmc;
 pub mod subdiff;
 pub mod unit_key;
 pub mod volume;
@@ -48,6 +49,13 @@ pub use crate::keydb::{
     DeviceKeyRecord, DiscRecords, DriveCertRecord, HostCertRecord, KeyDb, KeyDbEntry, ProcessingKey,
 };
 pub use crate::mkb::{Mkb, MkbType, RevocationEntry, SubsetDifferenceEntry};
+pub use crate::mmc::{
+    build_send_key_host_cert_chal, build_send_key_host_key, parse_report_key_agid,
+    parse_report_key_drive_cert, parse_report_key_drive_cert_chal, parse_report_key_drive_key,
+    parse_send_key_host_cert_chal, parse_send_key_host_key, parse_volume_id_response, AgidResponse,
+    DataDirection, DriveCertChallengeResponse, DriveCertResponse, DriveCommand, DriveKeyResponse,
+    MockDrive, ReadDiscStructure, ReportKey, ScsiResponse, SendKey, VolumeIdResponse,
+};
 pub use crate::subdiff::{aes_g3, applies_to_device, derive_processing_key, SubsetDifference};
 pub use crate::unit_key::{CpsUnitRecord, UnitKeyFile, UnitKeyFileHeader};
 pub use crate::volume::{AacsVolume, CpsUnit, DeviceKey, TitleKey};

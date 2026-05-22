@@ -5,6 +5,24 @@ Content System) decryption layer used by Blu-ray Disc, per the
 publicly-published AACS LA technical specifications **Common Final
 0.953** (Oct 2012) and **BD-Prerecorded Final 0.953** (Oct 2012).
 
+Phase B (round 93) adds the SCSI MMC drive-command wire layer:
+
+- **`REPORT_KEY` (0xA4)**, **`SEND_KEY` (0xA3)**, and
+  **`READ_DISC_STRUCTURE` (0xAD)** typed CDB constructors per
+  MMC-6 r02g + AACS Common Final 0.953.
+- AACS Key Class 0x02 sub-payload constructors / parsers — AGID
+  request, Drive Certificate Challenge (`Dn` + Drive Cert), Drive
+  Key (`Dv` + `Dsig`), Drive Certificate, Host Certificate
+  Challenge (`Hn` + Host Cert), Host Key (`Hv` + `Hsig`),
+  Invalidate-AGID.
+- Volume Identifier read via `READ_DISC_STRUCTURE` Format `0x80`
+  (32-byte `Volume ID || MAC`).
+- `DriveCommand` trait abstraction over the SCSI pass-through
+  surface (`SG_IO` / `IOSCSITaskDeviceInterface` /
+  `IOCTL_SCSI_PASS_THROUGH_DIRECT`) — Phase B ships only the trait
+  + an in-process `MockDrive` for tests. No real-hardware transport
+  yet.
+
 Round 1 ships the full prerecorded-BD decryption pipeline:
 
 - **KEYDB.cfg** parser (the de-facto community VUK key-database format)
@@ -98,9 +116,10 @@ consulted. No code or text from `libaacs`, `aacskeys`, `libbluray`,
 
 - Bus encryption (BD-Prerecorded §3.7) — drive/host SCSI transport
   concern only.
-- AACS Drive / Host authentication (Common spec ch. 4) — only required
-  for live optical-drive access; irrelevant when reading a decrypted
-  disc image.
+- AACS Drive / Host authentication ECDSA layer (Common spec ch. 4
+  §4.3 steps 14-23) — the wire-format CDBs that ferry the AKE
+  protocol are now staged (Phase B); the ECDSA-secp160r1 sign /
+  verify primitives are still pending (Phase C).
 - ECDSA signature verification (`AACS_Verify(AACS_LA_pub, ...)`) —
   spec defines it but we don't need it to derive `Km`.
 - Content Hash Table verification (BD-Prerecorded §2.3) — SHA-1
