@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1](https://github.com/OxideAV/oxideav-aacs/compare/v0.1.0...v0.1.1) - 2026-05-22
+
+### Other
+
+- Phase C: Drive-Host AKE + ECDSA-secp160r1 + Bus Key (AACS Common 0.953 §4.3)
+- Phase B — SCSI MMC drive command layer (REPORT_KEY / SEND_KEY / READ_DISC_STRUCTURE)
+- parse |-leader DK / PK / HC / DC / DISCID-scoped records (Phase A)
+- disc_id is SHA-1(Unit_Key_RO.inf), not SHA-1(Volume_ID)
+- disc_id_for_volume_id — SHA-1(volume_id) for KEYDB.cfg lookup
+- fmt + tests: align integration tests with permissive parse
+- tolerate sector-padding zeros after the End-of-MKB record
+
 ### Added — Phase C: Drive-Host Authentication & Key Exchange (AKE)
 
 New `ec`, `ecdsa`, and `ake` modules implementing the AACS Common
