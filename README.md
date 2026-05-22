@@ -5,6 +5,34 @@ Content System) decryption layer used by Blu-ray Disc, per the
 publicly-published AACS LA technical specifications **Common Final
 0.953** (Oct 2012) and **BD-Prerecorded Final 0.953** (Oct 2012).
 
+Phase C (round 96) adds the Drive-Host Authentication & Key Exchange
+(AKE) layer per AACS Common Final 0.953 §4.3, on top of the Phase B
+MMC wire layer:
+
+- **ECDSA over the AACS 160-bit curve** (Table 2-1, `a = -3` over
+  `GF(p)`) — a clean-room big-integer + short-Weierstrass point
+  implementation (`ec` module, Jacobian scalar multiply) with
+  `AACS_Sign` / `AACS_Verify` (`ecdsa` module) and a clean-room
+  FIPS 180-2 SHA-1 message digest. Cross-checked bit-exact against an
+  independent Python big-int reference vector.
+- **AES-128-CMAC** (NIST SP 800-38B) for the §4.4 transferred-ID MAC,
+  validated against the SP 800-38B Appendix D.1 example vectors.
+- **`host_authenticate`** — the full §4.3 Host-side state machine:
+  AGID → `Hn || Host_Cert` → `Dn || Drive_Cert` (verify) →
+  `Dv || Dsig` (verify) → `Hv || Hsig` → Bus Key. The drive side is
+  modelled by an authenticating `DriveAuthState` wired into
+  `MockDrive`, so a synthetic-cert handshake authenticates
+  end-to-end and both sides derive the same 128-bit Bus Key
+  (`BK = lsb_128(x-coordinate of Hk·Dv) = lsb_128(x(Dk·Hv))`).
+- **`Certificate`** parse + AACS-LA-signature verification for the
+  92-byte Drive (Table 4-1) / Host (Table 4-2) certificates, and
+  **`read_verified_volume_id`** for the §4.4 Volume ID transfer with
+  `CMAC(BK, Volume_ID)` verification.
+
+No real AACS LA keys, no real certificates, no disc fixtures — every
+test mints its own synthetic LA root + Drive/Host identities and runs
+the handshake in-process.
+
 Phase B (round 93) adds the SCSI MMC drive-command wire layer:
 
 - **`REPORT_KEY` (0xA4)**, **`SEND_KEY` (0xA3)**, and

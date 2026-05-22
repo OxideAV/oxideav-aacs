@@ -144,6 +144,73 @@ pub fn aes_h(data: &[u8]) -> [u8; 16] {
     h
 }
 
+/// AES-128-CMAC per NIST SP 800-38B, used by AACS Common §2.1.6 as the
+/// `CMAC(k, D)` message-authentication function. Returns the full
+/// 128-bit MAC (the spec uses the complete 16-byte output).
+///
+/// The subkey-generation step left-shifts `L = AES-128E(k, 0^128)` by
+/// one bit (with the `Rb = 0x87` reduction for AES's 128-bit block) to
+/// derive `K1`, and again for `K2`, exactly as SP 800-38B §6.1.
+pub fn aes_128_cmac(key: &[u8; 16], data: &[u8]) -> [u8; 16] {
+    // Subkey generation.
+    let l = aes_128_ecb_encrypt(key, &[0u8; 16]);
+    let k1 = cmac_subkey(&l);
+    let k2 = cmac_subkey(&k1);
+
+    let n_blocks = data.len().div_ceil(BLOCK_SIZE);
+    // SP 800-38B: an empty message uses a single padded block.
+    let (n_blocks, complete_last) = if n_blocks == 0 {
+        (1, false)
+    } else {
+        (n_blocks, data.len() % BLOCK_SIZE == 0)
+    };
+
+    // Last block: M_n XOR K1 (complete) or pad(M_n) XOR K2 (partial).
+    let mut last = [0u8; 16];
+    let last_start = (n_blocks - 1) * BLOCK_SIZE;
+    let tail = &data[last_start..];
+    if complete_last {
+        last.copy_from_slice(tail);
+        for i in 0..16 {
+            last[i] ^= k1[i];
+        }
+    } else {
+        last[..tail.len()].copy_from_slice(tail);
+        last[tail.len()] = 0x80;
+        for i in 0..16 {
+            last[i] ^= k2[i];
+        }
+    }
+
+    let mut x = [0u8; 16];
+    for blk in 0..n_blocks - 1 {
+        let chunk = &data[blk * BLOCK_SIZE..(blk + 1) * BLOCK_SIZE];
+        for i in 0..16 {
+            x[i] ^= chunk[i];
+        }
+        x = aes_128_ecb_encrypt(key, &x);
+    }
+    for i in 0..16 {
+        x[i] ^= last[i];
+    }
+    aes_128_ecb_encrypt(key, &x)
+}
+
+/// CMAC subkey derivation: left-shift `input` by one bit, conditionally
+/// XOR with `Rb = 0x...87` when the high bit was set (SP 800-38B §6.1).
+fn cmac_subkey(input: &[u8; 16]) -> [u8; 16] {
+    let mut out = [0u8; 16];
+    let mut carry = 0u8;
+    for i in (0..16).rev() {
+        out[i] = (input[i] << 1) | carry;
+        carry = input[i] >> 7;
+    }
+    if input[0] & 0x80 != 0 {
+        out[15] ^= 0x87;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,5 +261,73 @@ mod tests {
     #[test]
     fn aes_h_empty_message_does_not_panic() {
         let _ = aes_h(b"");
+    }
+
+    // NIST SP 800-38B, Appendix D.1 (AES-128) published example vectors.
+    // These are the standard's own worked examples — the same key and
+    // messages that define the algorithm — not values copied from any
+    // implementation.
+    const CMAC_KEY: [u8; 16] = [
+        0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f,
+        0x3c,
+    ];
+    const CMAC_MSG: [u8; 64] = [
+        0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96, 0xe9, 0x3d, 0x7e, 0x11, 0x73, 0x93, 0x17,
+        0x2a, 0xae, 0x2d, 0x8a, 0x57, 0x1e, 0x03, 0xac, 0x9c, 0x9e, 0xb7, 0x6f, 0xac, 0x45, 0xaf,
+        0x8e, 0x51, 0x30, 0xc8, 0x1c, 0x46, 0xa3, 0x5c, 0xe4, 0x11, 0xe5, 0xfb, 0xc1, 0x19, 0x1a,
+        0x0a, 0x52, 0xef, 0xf6, 0x9f, 0x24, 0x45, 0xdf, 0x4f, 0x9b, 0x17, 0xad, 0x2b, 0x41, 0x7b,
+        0xe6, 0x6c, 0x37, 0x10,
+    ];
+
+    #[test]
+    fn cmac_nist_empty_example() {
+        // Example 1: Mlen = 0 → T = bb1d6929 e9593728 7fa37d12 9b756746.
+        let mac = aes_128_cmac(&CMAC_KEY, &[]);
+        assert_eq!(
+            mac,
+            [
+                0xbb, 0x1d, 0x69, 0x29, 0xe9, 0x59, 0x37, 0x28, 0x7f, 0xa3, 0x7d, 0x12, 0x9b, 0x75,
+                0x67, 0x46
+            ]
+        );
+    }
+
+    #[test]
+    fn cmac_nist_one_block_example() {
+        // Example 2: Mlen = 128 → T = 070a16b4 6b4d4144 f79bdd9d d04a287c.
+        let mac = aes_128_cmac(&CMAC_KEY, &CMAC_MSG[..16]);
+        assert_eq!(
+            mac,
+            [
+                0x07, 0x0a, 0x16, 0xb4, 0x6b, 0x4d, 0x41, 0x44, 0xf7, 0x9b, 0xdd, 0x9d, 0xd0, 0x4a,
+                0x28, 0x7c
+            ]
+        );
+    }
+
+    #[test]
+    fn cmac_nist_partial_block_example() {
+        // Example 3: Mlen = 320 → T = dfa66747 de9ae630 30ca3261 1497c827.
+        let mac = aes_128_cmac(&CMAC_KEY, &CMAC_MSG[..40]);
+        assert_eq!(
+            mac,
+            [
+                0xdf, 0xa6, 0x67, 0x47, 0xde, 0x9a, 0xe6, 0x30, 0x30, 0xca, 0x32, 0x61, 0x14, 0x97,
+                0xc8, 0x27
+            ]
+        );
+    }
+
+    #[test]
+    fn cmac_nist_full_message_example() {
+        // Example 4: Mlen = 512 → T = 51f0bebf 7e3b9d92 fc497417 79363cfe.
+        let mac = aes_128_cmac(&CMAC_KEY, &CMAC_MSG);
+        assert_eq!(
+            mac,
+            [
+                0x51, 0xf0, 0xbe, 0xbf, 0x7e, 0x3b, 0x9d, 0x92, 0xfc, 0x49, 0x74, 0x17, 0x79, 0x36,
+                0x3c, 0xfe
+            ]
+        );
     }
 }

@@ -64,6 +64,22 @@ pub enum AacsError {
     /// best-effort excerpt of the offending text (truncated to 80
     /// chars) for diagnostics.
     KeyDbParseError(String),
+    /// The Drive Certificate's AACS LA signature failed verification
+    /// during the §4.3 AKE (step 15) — the drive is not an
+    /// AACS-compliant device or the certificate is corrupt.
+    DriveCertSignatureInvalid,
+    /// The Host Certificate's AACS LA signature failed verification
+    /// during the §4.3 AKE (step 9).
+    HostCertSignatureInvalid,
+    /// The drive's `Dsig` over `Hn || Dv` failed verification (§4.3
+    /// step 22).
+    DriveSignatureInvalid,
+    /// The host's `Hsig` over `Dn || Hv` failed verification (§4.3
+    /// step 27).
+    HostSignatureInvalid,
+    /// The drive's CMAC (`Dm`) over a transferred ID did not match the
+    /// host's recomputed `Hm` under the Bus Key (§4.4 step 4).
+    VolumeIdMacInvalid,
     /// A KEYDB.cfg `|`-leader header line (one of `DK` / `PK` / `HC`
     /// / `DC` / `VID` / `VUK` / `MEK` / `TK` / `KCD` / `DISCID`) was
     /// malformed: wrong number of fields, hex value with the wrong
@@ -106,6 +122,19 @@ impl fmt::Display for AacsError {
             Self::BadAlignedUnitLength(n) => {
                 write!(f, "Aligned Unit must be exactly 6144 bytes; got {n} bytes")
             }
+            Self::DriveCertSignatureInvalid => {
+                f.write_str("Drive Certificate AACS LA signature verification failed")
+            }
+            Self::HostCertSignatureInvalid => {
+                f.write_str("Host Certificate AACS LA signature verification failed")
+            }
+            Self::DriveSignatureInvalid => {
+                f.write_str("Drive signature (Dsig over Hn || Dv) verification failed")
+            }
+            Self::HostSignatureInvalid => {
+                f.write_str("Host signature (Hsig over Dn || Hv) verification failed")
+            }
+            Self::VolumeIdMacInvalid => f.write_str("transferred-ID CMAC mismatch under Bus Key"),
             Self::KeyDbParseError(line) => write!(f, "KEYDB.cfg parse error near: {line:?}"),
             Self::HeaderParseError(msg) => write!(f, "KEYDB.cfg header parse error: {msg}"),
         }

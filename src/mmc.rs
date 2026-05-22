@@ -937,6 +937,13 @@ pub struct MockDrive {
     pub last_host_key: Option<Vec<u8>>,
     /// Set to `true` after the host pushes `Invalidate AGID`.
     pub agid_invalidated: bool,
+    /// Optional authenticating drive identity. When `Some`, the mock
+    /// performs the §4.3 drive side properly: it verifies the host's
+    /// certificate + `Hsig`, generates a real `Dv = Dk·G`, signs
+    /// `Dsig = AACS_Sign(Drive_priv, Hn || Dv)`, and derives the Bus
+    /// Key `Dk·Hv`. When `None`, the mock returns the static fixture
+    /// bytes (Phase B behaviour) for byte-layout tests.
+    pub auth: Option<crate::ake::DriveAuthState>,
 }
 
 impl Default for MockDrive {
@@ -952,6 +959,7 @@ impl Default for MockDrive {
             last_host_cert_chal: None,
             last_host_key: None,
             agid_invalidated: false,
+            auth: None,
         }
     }
 }
@@ -1012,6 +1020,7 @@ impl MockDrive {
             last_host_cert_chal: None,
             last_host_key: None,
             agid_invalidated: false,
+            auth: None,
         }
     }
 }
@@ -1045,17 +1054,29 @@ impl DriveCommand for MockDrive {
                         Ok(ScsiResponse::good(out))
                     }
                     KF_REPORT_AACS_DRIVE_CERT_CHAL => {
+                        // Authenticating mode returns the real signed
+                        // Drive Certificate + the drive nonce; static
+                        // mode returns the fixture bytes.
+                        let (nonce, cert): ([u8; DRIVE_NONCE_LEN], [u8; DRIVE_CERT_LEN]) =
+                            match &self.auth {
+                                Some(a) => (a.drive_nonce, a.drive_cert),
+                                None => (self.drive_nonce, self.drive_cert),
+                            };
                         let mut out = Vec::with_capacity(116);
                         out.extend_from_slice(&[0x00, 0x72, 0x00, 0x00]);
-                        out.extend_from_slice(&self.drive_nonce);
-                        out.extend_from_slice(&self.drive_cert);
+                        out.extend_from_slice(&nonce);
+                        out.extend_from_slice(&cert);
                         Ok(ScsiResponse::good(out))
                     }
                     KF_REPORT_AACS_DRIVE_KEY => {
+                        let (dv, dsig): ([u8; EC_POINT_LEN], [u8; EC_SIG_LEN]) = match &self.auth {
+                            Some(a) => a.drive_key_response()?,
+                            None => (self.drive_dv, self.drive_dsig),
+                        };
                         let mut out = Vec::with_capacity(84);
                         out.extend_from_slice(&[0x00, 0x52, 0x00, 0x00]);
-                        out.extend_from_slice(&self.drive_dv);
-                        out.extend_from_slice(&self.drive_dsig);
+                        out.extend_from_slice(&dv);
+                        out.extend_from_slice(&dsig);
                         Ok(ScsiResponse::good(out))
                     }
                     KF_REPORT_AACS_DRIVE_CERT => {
@@ -1092,14 +1113,19 @@ impl DriveCommand for MockDrive {
                 }
                 match sk.key_format {
                     KF_SEND_AACS_HOST_CERT_CHAL => {
-                        // Validate the parameter list before
-                        // accepting.
-                        let _ = parse_send_key_host_cert_chal(data_out)?;
+                        // Validate the parameter list before accepting.
+                        let (hn, hcert) = parse_send_key_host_cert_chal(data_out)?;
+                        if let Some(auth) = self.auth.as_mut() {
+                            auth.accept_host_cert_challenge(&hn, &hcert)?;
+                        }
                         self.last_host_cert_chal = Some(data_out.to_vec());
                         Ok(ScsiResponse::good(Vec::new()))
                     }
                     KF_SEND_AACS_HOST_KEY => {
-                        let _ = parse_send_key_host_key(data_out)?;
+                        let (hv, hsig) = parse_send_key_host_key(data_out)?;
+                        if let Some(auth) = self.auth.as_mut() {
+                            auth.accept_host_key(&hv, &hsig)?;
+                        }
                         self.last_host_key = Some(data_out.to_vec());
                         Ok(ScsiResponse::good(Vec::new()))
                     }
@@ -1117,10 +1143,19 @@ impl DriveCommand for MockDrive {
                 let rds = ReadDiscStructure::parse_cdb(cdb)?;
                 match rds.format {
                     FORMAT_AACS_VOLUME_ID => {
+                        // Authenticating mode computes the real
+                        // Dm = CMAC(BK, Volume_ID) (§4.4 step 3); static
+                        // mode returns the fixture MAC bytes.
+                        let mac: [u8; ID_MAC_LEN] = match &self.auth {
+                            Some(a) if a.bus_key.is_some() => {
+                                crate::aes::aes_128_cmac(&a.bus_key.unwrap(), &self.volume_id)
+                            }
+                            _ => self.volume_id_mac,
+                        };
                         let mut out = Vec::with_capacity(36);
                         out.extend_from_slice(&[0x00, 0x22, 0x00, 0x00]);
                         out.extend_from_slice(&self.volume_id);
-                        out.extend_from_slice(&self.volume_id_mac);
+                        out.extend_from_slice(&mac);
                         Ok(ScsiResponse::good(out))
                     }
                     other => Err(AacsError::InvalidValue {

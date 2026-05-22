@@ -33,7 +33,10 @@
 #![deny(rust_2018_idioms)]
 
 pub mod aes;
+pub mod ake;
 pub mod content;
+pub mod ec;
+pub mod ecdsa;
 pub mod error;
 pub mod keydb;
 pub mod mkb;
@@ -43,7 +46,14 @@ pub mod unit_key;
 pub mod volume;
 pub mod vuk;
 
+pub use crate::ake::{
+    build_signed_certificate, bus_key_from_point, host_authenticate, read_verified_volume_id,
+    AkeResult, Certificate, DriveAuthState, HostCredentials, BUS_KEY_LEN, CERT_TYPE_DRIVE,
+    CERT_TYPE_HOST,
+};
 pub use crate::content::{decrypt_aligned_unit, encrypt_aligned_unit, ALIGNED_UNIT_SIZE};
+pub use crate::ec::{Fp, Point, U160};
+pub use crate::ecdsa::{sign, sign_with_k, verify, Signature};
 pub use crate::error::AacsError;
 pub use crate::keydb::{
     DeviceKeyRecord, DiscRecords, DriveCertRecord, HostCertRecord, KeyDb, KeyDbEntry, ProcessingKey,

@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Phase C: Drive-Host Authentication & Key Exchange (AKE)
+
+New `ec`, `ecdsa`, and `ake` modules implementing the AACS Common
+Final 0.953 §4.3 "AACS Drive Authentication Algorithm" (Figure 4-9)
+end-to-end on top of the Phase B MMC layer. All cryptography is
+clean-room from the spec's published math (Table 2-1 curve parameters,
+§2.3 ECDSA, §2.1.5 SHA-1, §2.1.6 CMAC); no external crypto-library
+source (RustCrypto / OpenSSL / libaacs / …) was consulted. The
+`openssl` CLI was used only as an opaque test-vector oracle, and the
+ECDSA path is additionally cross-checked bit-exact against an
+independent Python big-int reference.
+
+- **`ec` module** — a 160-bit big-integer (`U160`, five `u32` limbs)
+  and short-Weierstrass curve over `GF(p)` for the AACS curve
+  (Table 2-1: `a = -3`, prime `p`, base point `G`, order `n`). Affine
+  `add`/`double`/`is_on_curve` plus a Jacobian-coordinate
+  `mul_scalar` (single final inversion). 40-byte EC-point encoding
+  `x(20) || y(20)`.
+- **`ecdsa` module** — `AACS_Sign` / `AACS_Verify` (X9.62 / FIPS
+  186-2) with a clean-room FIPS 180-2 SHA-1 digest; 40-byte `r || s`
+  signatures. A deterministic `k` helper (AES-H based, *not* RFC 6979)
+  makes the synthetic test handshake reproducible. SHA-1 validated
+  against the FIPS 180-2 `abc` / empty / two-block vectors; the full
+  sign/verify against an independent Python reference vector.
+- **`aes::aes_128_cmac`** — AES-128-CMAC (NIST SP 800-38B), validated
+  against the SP 800-38B Appendix D.1 example MACs (empty / 1-block /
+  partial / full-message).
+- **`ake` module**:
+  - `Certificate::parse` + `verify_signature` for the 92-byte Drive
+    (Table 4-1) / Host (Table 4-2) certificates
+    (`Type Flags Length ID Reserved PubKey(40) Sig(40)`), with the
+    `Cert_sig = bytes 52..91` signed over `Cert = bytes 0..51`.
+  - `build_signed_certificate` to mint synthetic LA-signed certs.
+  - `host_authenticate` — the §4.3 Host state machine driving any
+    `DriveCommand` transport through AGID → Host Cert Challenge →
+    Drive Cert Challenge → Drive Key → Host Key → Bus Key.
+  - `DriveAuthState` — the §4.3 drive side (verify Host Cert + Hsig,
+    sign `Dsig` over `Hn || Dv`, derive `Dk·Hv`), wired into the
+    Phase B `MockDrive` via its new `auth` field.
+  - `bus_key_from_point` — `BK = [x-coordinate of shared point]
+    lsb_128` (§4.3 steps 28/29).
+  - `read_verified_volume_id` — §4.4 Volume ID transfer with
+    `Dm = CMAC(BK, Volume_ID)` host-side verification.
+- New `AacsError` variants:
+  `DriveCertSignatureInvalid`, `HostCertSignatureInvalid`,
+  `DriveSignatureInvalid`, `HostSignatureInvalid`, `VolumeIdMacInvalid`.
+- New integration suite `tests/synth_phasec_ake.rs` (5 tests): full
+  synthetic-cert AKE round-trip with matching Host/Drive Bus Keys,
+  §4.4 Volume ID verification, and rejection of a wrong-LA Drive cert,
+  a wrong-LA Host cert, and a tampered Volume ID MAC.
+
+**Note on the Bus Key KDF.** The task brief mentioned a possible
+"AES-G / SHA-1 KDF" for the Bus Key; AACS Common Final 0.953 §4.3
+steps 28/29 in fact define the Bus Key directly as the least
+significant 128 bits of the x-coordinate of the shared ECDH point
+(`Dk·Hv` / `Hk·Dv`) — no AES-G/SHA-1 post-derivation. This module
+implements per the spec; the §4.4+ ID transfers then key AES-CMAC
+under that Bus Key.
+
 ### Added — Phase B: SCSI MMC drive-command wire layer
 
 New `mmc` module implementing the byte-level encoding/parsing for the
