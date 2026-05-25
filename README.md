@@ -5,6 +5,28 @@ Content System) decryption layer used by Blu-ray Disc, per the
 publicly-published AACS LA technical specifications **Common Final
 0.953** (Oct 2012) and **BD-Prerecorded Final 0.953** (Oct 2012).
 
+Phase D (round 127) wires the Type-4 MKB / Key Conversion Data path
+into the volume pipeline per AACS Common Final 0.953 §3.2.5.1.4 +
+BD-Prerecorded Final 0.953 §3.8:
+
+- **`subdiff::apply_key_conversion_data(kmp, kcd)`** — the
+  `K_m = AES-G(K_mp, KCD)` primitive.
+- **`AacsVolume::derive_vuk_from_device_key_with_kcd`** — Type-4-aware
+  VUK derivation that walks the SD tree, tries the Verify Media Key
+  Record on the precursor first (the spec's "old MKB" rule —
+  precursor that verifies directly is the Media Key; KCD is NOT
+  applied), and only invokes `AES-G(K_mp, KCD)` when the precursor
+  fails verification.
+- **`AacsVolume::derive_media_key_from_device_key`** — the raw
+  SD-walk primitive for callers that want to make the verify/KCD
+  decision themselves.
+- **`Mkb::is_verified_media_key(km) -> bool`** + new
+  `MkbType::requires_kcd` / `MkbType::as_u32` predicates.
+
+`KEYDB.cfg` already parses the `| KCD |` record into
+`DiscRecords::kcd`; that's the conventional source for the 16-byte
+KCD payload the BD-ROM KCD-Mark would otherwise supply out-of-band.
+
 Phase C (round 96) adds the Drive-Host Authentication & Key Exchange
 (AKE) layer per AACS Common Final 0.953 §4.3, on top of the Phase B
 MMC wire layer:

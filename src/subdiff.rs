@@ -230,6 +230,13 @@ pub fn derive_processing_key(
 ///
 /// where `uv` is interpreted as a 32-bit big-endian value left-padded
 /// with 12 zero bytes.
+///
+/// **Note on MKB type**: for a Type-3 MKB this returns the actual
+/// Media Key `K_m`. For a Type-4 MKB the same calculation yields the
+/// Media Key *Precursor* `K_mp`, which the device must then post-
+/// process with the disc's Key Conversion Data via
+/// [`apply_key_conversion_data`] to obtain `K_m`. Common spec
+/// §3.2.5.1.4 and BD-Prerecorded §3.8.
 pub fn media_key_from_processing_key(
     processing_key: &[u8; 16],
     target_uv: u32,
@@ -245,6 +252,39 @@ pub fn media_key_from_processing_key(
     d[14] ^= uv_be[2];
     d[15] ^= uv_be[3];
     d
+}
+
+/// Apply Key Conversion Data to a Media Key Precursor to obtain the
+/// Media Key, per AACS Common spec §3.2.5.1.4 and BD-Prerecorded
+/// spec §3.8:
+///
+/// ```text
+/// K_m = AES-G(K_mp, KCD)
+/// ```
+///
+/// For Type-4 MKBs (`MKBType = 0x0004_1003`), the subset-difference
+/// tree walk yields a Media Key Precursor `K_mp` rather than the
+/// Media Key directly. Devices that are required to use KCD (per the
+/// AACS Compliance Rules — broadly, non-PC Licensed Players without
+/// proactive renewal) combine the precursor with the disc's KCD
+/// payload to obtain `K_m`.
+///
+/// The 16-byte `kcd` parameter corresponds to the payload of the
+/// BD-ROM "KCD-Mark" (BD-Prerecorded Table 3-11), which a device
+/// reads via an out-of-band mechanism not described in the public
+/// spec set. In `oxideav-aacs` the KCD is supplied externally — most
+/// commonly via the `| KCD |` row of a `KEYDB.cfg` file, surfaced as
+/// [`crate::keydb::DiscRecords::kcd`].
+///
+/// **Important "old MKB" rule** (Common spec §3.2.5.1.4 final
+/// paragraph): a device that normally uses KCD must NOT apply it if
+/// the precursor already verifies as the Media Key. Callers that
+/// don't know the MKB type in advance should call
+/// [`Mkb::verify_media_key`](crate::mkb::Mkb::verify_media_key) on
+/// the precursor first, and only invoke `apply_key_conversion_data`
+/// when verification fails.
+pub fn apply_key_conversion_data(media_key_precursor: &[u8; 16], kcd: &[u8; 16]) -> [u8; 16] {
+    crate::aes::aes_g(media_key_precursor, kcd)
 }
 
 #[cfg(test)]
@@ -332,5 +372,39 @@ mod tests {
         expected[14] ^= 0xBE;
         expected[15] ^= 0xEF;
         assert_eq!(km2, expected);
+    }
+
+    /// Common spec §3.2.5.1.4 / BD-Prerecorded §3.8 define KCD post-
+    /// processing as `K_m = AES-G(K_mp, KCD)`. The helper must be
+    /// exactly equal to the public [`crate::aes::aes_g`] primitive.
+    #[test]
+    fn apply_kcd_equals_aes_g() {
+        let kmp = [
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54,
+            0x32, 0x10,
+        ];
+        let kcd = [
+            0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE, 0xF0, 0x0D, 0xFA, 0xCE, 0x12, 0x34,
+            0x56, 0x78,
+        ];
+        let km_direct = crate::aes::aes_g(&kmp, &kcd);
+        let km_helper = apply_key_conversion_data(&kmp, &kcd);
+        assert_eq!(
+            km_helper, km_direct,
+            "apply_key_conversion_data must be aes_g(kmp, kcd)"
+        );
+    }
+
+    /// Idempotence-style sanity check: zero KCD with the AES-G
+    /// definition is still meaningful (it's `AES-128D(kmp, 0) XOR 0`).
+    /// Just pin that two distinct KCDs produce two distinct media
+    /// keys, so a future refactor that accidentally ignored `kcd`
+    /// would fail.
+    #[test]
+    fn apply_kcd_distinguishes_distinct_kcds() {
+        let kmp = [0x55u8; 16];
+        let a = apply_key_conversion_data(&kmp, &[0x00u8; 16]);
+        let b = apply_key_conversion_data(&kmp, &[0xFFu8; 16]);
+        assert_ne!(a, b, "different KCDs must yield different Media Keys");
     }
 }

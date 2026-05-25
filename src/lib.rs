@@ -66,7 +66,9 @@ pub use crate::mmc::{
     DataDirection, DriveCertChallengeResponse, DriveCertResponse, DriveCommand, DriveKeyResponse,
     MockDrive, ReadDiscStructure, ReportKey, ScsiResponse, SendKey, VolumeIdResponse,
 };
-pub use crate::subdiff::{aes_g3, applies_to_device, derive_processing_key, SubsetDifference};
+pub use crate::subdiff::{
+    aes_g3, applies_to_device, apply_key_conversion_data, derive_processing_key, SubsetDifference,
+};
 pub use crate::unit_key::{CpsUnitRecord, UnitKeyFile, UnitKeyFileHeader};
 pub use crate::volume::{AacsVolume, CpsUnit, DeviceKey, TitleKey};
 pub use crate::vuk::{derive_vuk, Vuk};

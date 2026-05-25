@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Phase D: Type-4 MKB + Key Conversion Data post-processing
+
+Wires the AACS Common spec §3.2.5.1.4 + BD-Prerecorded §3.8 "Type-4
+MKB / Media Key Precursor" path into the high-level `AacsVolume`
+pipeline. Type-4 MKBs emit a Media Key *Precursor* `K_mp` from the
+Subset-Difference walk rather than the Media Key directly; devices
+that are required to use Key Conversion Data combine `K_mp` with the
+disc's 16-byte KCD payload via `K_m = AES-G(K_mp, KCD)` before VUK
+derivation. The KCD itself is sourced out-of-band (from the BD-ROM
+KCD-Mark, surfaced in `oxideav-aacs` via the `| KCD |` row of a
+`KEYDB.cfg` file → `DiscRecords::kcd`).
+
+- **`subdiff::apply_key_conversion_data(kmp, kcd)`** — the
+  `K_m = AES-G(K_mp, KCD)` primitive. Equivalent to
+  `aes::aes_g(kmp, kcd)`; named separately for readability at the
+  call site. Re-exported from the crate root.
+- **`AacsVolume::derive_vuk_from_device_key_with_kcd(device, vol_id,
+  kcd)`** — Type-4-aware VUK derivation implementing the spec's
+  "verify-then-apply-KCD" decision tree:
+  1. SD-walk to obtain the raw precursor (or Media Key for Type-3).
+  2. If that value already verifies under the Verify Media Key Record
+     (the spec's "old MKB" rule, §3.2.5.1.4 final paragraph), adopt
+     it as `K_m` and skip KCD application — even if a KCD was
+     supplied.
+  3. Otherwise apply `AES-G(K_mp, KCD)` and re-verify; failure
+     surfaces `MediaKeyVerificationFailed`.
+- **`AacsVolume::derive_media_key_from_device_key(device)`** —
+  exposed cryptographic primitive returning the raw SD-walk output
+  (precursor for Type-4, Media Key for Type-3). Lets callers make
+  the verify/KCD decision themselves rather than going through the
+  higher-level `_with_kcd` helper.
+- **`Mkb::is_verified_media_key(km) -> bool`** — boolean variant of
+  the existing `verify_media_key`, returning `false` (rather than
+  `MissingVerifyMediaKeyRecord`) when the `0x81` record is absent.
+  The Type-4 decision path needs this distinction.
+- **`MkbType::requires_kcd()`** + **`MkbType::as_u32()`** — predicate
+  + wire-format inverse of the parser's `from_u32`.
+
+`derive_vuk_from_device_key` is refactored on top of
+`derive_media_key_from_device_key` + the existing
+`Mkb::verify_media_key` so the Type-3 path is byte-identical to the
+prior implementation.
+
+New `tests/synth_phased_kcd.rs` (7 tests) pins:
+- Type-4 + valid KCD round-trip → matching VUK.
+- Type-4 + wrong KCD → `MediaKeyVerificationFailed`.
+- Type-4 "old MKB" precursor-verifies-directly fallback (KCD ignored
+  even when supplied).
+- Type-4 without KCD when KCD was needed → error.
+- Type-3 with a stray KCD argument → KCD ignored.
+- `KCD` record loads from a synthetic `KEYDB.cfg`.
+- Synthetic SD configuration sanity check.
+
+Plus 5 new mkb unit tests covering `MkbType::requires_kcd`,
+`MkbType::as_u32` round-trip, and `is_verified_media_key` edges.
+
+No new external dependencies, no docs-gap (Common spec §3.2.5.1.1 +
+§3.2.5.1.4 + BD-Prerecorded §3.8 are all in `docs/container/aacs/`),
+no `oxideav-core` API change. The crate's standalone (no-default
+features) build still passes.
+
 ## [0.1.1](https://github.com/OxideAV/oxideav-aacs/compare/v0.1.0...v0.1.1) - 2026-05-22
 
 ### Other

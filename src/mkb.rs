@@ -46,6 +46,26 @@ impl MkbType {
             other => Self::Other(other),
         }
     }
+
+    /// Raw 32-bit `MKBType` value as it appears on the wire (Common
+    /// spec §3.2.5.1.1, Table 3-2).
+    pub fn as_u32(self) -> u32 {
+        match self {
+            Self::Type3 => 0x0003_1003,
+            Self::Type4 => 0x0004_1003,
+            Self::Type10 => 0x000A_1003,
+            Self::Other(v) => v,
+        }
+    }
+
+    /// `true` for the Type-4 MKB whose subset-difference walk yields
+    /// a Media Key *Precursor* `K_mp` rather than the final Media Key
+    /// `K_m`. Devices that are required to use Key Conversion Data
+    /// must then apply [`crate::subdiff::apply_key_conversion_data`]
+    /// to recover `K_m`. Common spec §3.2.5.1.1 + §3.2.5.1.4.
+    pub fn requires_kcd(self) -> bool {
+        matches!(self, Self::Type4)
+    }
 }
 
 /// One entry in a Host or Drive Revocation List (Common spec
@@ -217,14 +237,36 @@ impl Mkb {
             .verify_media_key
             .ok_or(AacsError::MissingVerifyMediaKeyRecord)?;
         let plaintext = aes_128_ecb_decrypt(km, &vd);
-        const SENTINEL: [u8; 8] = [0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF];
-        if plaintext[..8] == SENTINEL {
+        if plaintext[..8] == VERIFY_MEDIA_KEY_SENTINEL {
             Ok(())
         } else {
             Err(AacsError::MediaKeyVerificationFailed)
         }
     }
+
+    /// Boolean variant of [`Self::verify_media_key`]: returns `true`
+    /// when the candidate `km` passes the Verify Media Key Record
+    /// check, `false` when it doesn't, and `false` when the record is
+    /// absent. Use this rather than [`Self::verify_media_key`] when
+    /// the caller is expected to consult the result and branch (e.g.
+    /// the Type-4 "verify-precursor-or-apply-KCD" path described in
+    /// Common spec §3.2.5.1.4 final paragraph), since the latter
+    /// surfaces `MissingVerifyMediaKeyRecord` for an MKB without a
+    /// `0x81` record — which a Type-4 decision path would need to
+    /// treat differently from a wrong-key match-failure.
+    pub fn is_verified_media_key(&self, km: &[u8; 16]) -> bool {
+        let Some(vd) = self.verify_media_key else {
+            return false;
+        };
+        let plaintext = aes_128_ecb_decrypt(km, &vd);
+        plaintext[..8] == VERIFY_MEDIA_KEY_SENTINEL
+    }
 }
+
+/// Common spec §3.2.5.1.4 Verify Media Key sentinel — the high-order
+/// 64 bits of `AES-128D(K_m, V_d)` must equal this constant for the
+/// device to accept `K_m` as the correct Media Key.
+const VERIFY_MEDIA_KEY_SENTINEL: [u8; 8] = [0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF];
 
 fn parse_type_and_version(payload: &[u8], out: &mut Mkb) -> Result<(), AacsError> {
     // Payload (record length - 4 bytes header):
@@ -460,5 +502,60 @@ mod tests {
             Mkb::parse(&bytes),
             Err(AacsError::OversizedRecord { .. })
         ));
+    }
+
+    /// Type-3 MKBs do NOT require KCD; Type-4 does. Pinning this so a
+    /// refactor of the `requires_kcd` predicate can't drift silently.
+    #[test]
+    fn mkb_type_requires_kcd_only_for_type4() {
+        assert!(!MkbType::Type3.requires_kcd());
+        assert!(MkbType::Type4.requires_kcd());
+        assert!(!MkbType::Type10.requires_kcd());
+        assert!(!MkbType::Other(0x0099_1003).requires_kcd());
+    }
+
+    /// `MkbType::as_u32` is the inverse of the parser's `from_u32`.
+    #[test]
+    fn mkb_type_roundtrips_as_u32() {
+        for t in [
+            MkbType::Type3,
+            MkbType::Type4,
+            MkbType::Type10,
+            MkbType::Other(0x0099_1003),
+        ] {
+            assert_eq!(MkbType::from_u32(t.as_u32()), t);
+        }
+    }
+
+    /// `is_verified_media_key` mirrors `verify_media_key` but returns
+    /// `false` instead of `MissingVerifyMediaKeyRecord` when there's
+    /// no `0x81` record, so a Type-4 decision path can branch on it
+    /// without erroring.
+    #[test]
+    fn is_verified_media_key_false_when_no_record() {
+        let mkb = Mkb::default();
+        assert!(!mkb.is_verified_media_key(&[0u8; 16]));
+    }
+
+    #[test]
+    fn is_verified_media_key_true_for_matching_key() {
+        // Build a synthetic Vd = AES-128E(km, sentinel || trailing) and
+        // pin that is_verified_media_key(&km) is true and
+        // is_verified_media_key(&wrong) is false.
+        use crate::aes::aes_128_ecb_encrypt;
+        let km = [0x42u8; 16];
+        let mut plaintext = [0u8; 16];
+        plaintext[..8].copy_from_slice(&VERIFY_MEDIA_KEY_SENTINEL);
+        let vd = aes_128_ecb_encrypt(&km, &plaintext);
+
+        let mkb = Mkb {
+            verify_media_key: Some(vd),
+            ..Mkb::default()
+        };
+        assert!(mkb.is_verified_media_key(&km));
+
+        let mut wrong = km;
+        wrong[0] ^= 0x01;
+        assert!(!mkb.is_verified_media_key(&wrong));
     }
 }

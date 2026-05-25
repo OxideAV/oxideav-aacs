@@ -135,18 +135,100 @@ impl AacsVolume {
     ///
     /// Returns [`AacsError::DeviceRevoked`] if no MKB
     /// subset-difference applies to the Device Key.
+    ///
+    /// This is the **Type-3 path** (and is also correct for a Type-4
+    /// MKB whose recovered precursor happens to verify directly — the
+    /// "old MKB" rule in Common spec §3.2.5.1.4 final paragraph).
+    /// For Type-4 MKBs where the precursor does NOT verify, callers
+    /// must use [`Self::derive_vuk_from_device_key_with_kcd`].
     pub fn derive_vuk_from_device_key(
         &self,
         device_key: &DeviceKey,
         volume_id: &[u8; 16],
     ) -> Result<Vuk, AacsError> {
+        let km = self.derive_media_key_from_device_key(device_key)?;
+        self.mkb.verify_media_key(&km)?;
+        Ok(crate::vuk::derive_vuk(&km, volume_id))
+    }
+
+    /// Type-4 aware variant of [`Self::derive_vuk_from_device_key`].
+    ///
+    /// Implements the Common spec §3.2.5.1.4 "verify-then-apply-KCD"
+    /// decision tree:
+    ///
+    /// 1. Walk the Subset-Difference tree to obtain the raw output
+    ///    of `media_key_from_processing_key` — for a Type-3 MKB this
+    ///    is `K_m`; for a Type-4 MKB it's the Media Key Precursor
+    ///    `K_mp`.
+    /// 2. Run that output through the Verify Media Key Record. If it
+    ///    verifies as the Media Key directly (which can happen for an
+    ///    old Type-4 MKB whose KCD has not yet been incorporated into
+    ///    this part of the tree, per the spec's "old MKB" paragraph),
+    ///    we adopt it as `K_m` and skip KCD application — even if
+    ///    a KCD value was supplied.
+    /// 3. Otherwise apply `K_m = AES-G(K_mp, KCD)` and verify *that*
+    ///    against the Verify Media Key Record.
+    /// 4. Derive `K_vu = AES-G(K_m, ID_v)`.
+    ///
+    /// `kcd` is the 16-byte Key Conversion Data the device read from
+    /// the disc's KCD-Mark (BD-Prerecorded §3.8, Table 3-11) — in
+    /// `oxideav-aacs` this is most commonly the
+    /// [`crate::keydb::DiscRecords::kcd`] field of a `KEYDB.cfg` row
+    /// (the first 16 bytes of which are the KCD payload).
+    /// `kcd = None` is equivalent to calling
+    /// [`Self::derive_vuk_from_device_key`].
+    ///
+    /// Returns [`AacsError::DeviceRevoked`] if no subset-difference
+    /// applies, or [`AacsError::MediaKeyVerificationFailed`] if
+    /// neither the precursor nor the KCD-converted value verifies.
+    pub fn derive_vuk_from_device_key_with_kcd(
+        &self,
+        device_key: &DeviceKey,
+        volume_id: &[u8; 16],
+        kcd: Option<&[u8; 16]>,
+    ) -> Result<Vuk, AacsError> {
+        let candidate = self.derive_media_key_from_device_key(device_key)?;
+        // Step 2 — direct verify. Covers Type-3 always, and Type-4 in
+        // the "old MKB" case where KCD must NOT be applied.
+        if self.mkb.is_verified_media_key(&candidate) {
+            return Ok(crate::vuk::derive_vuk(&candidate, volume_id));
+        }
+        // Step 3 — try KCD post-processing if we have a KCD.
+        if let Some(kcd_bytes) = kcd {
+            let km = crate::subdiff::apply_key_conversion_data(&candidate, kcd_bytes);
+            self.mkb.verify_media_key(&km)?;
+            return Ok(crate::vuk::derive_vuk(&km, volume_id));
+        }
+        // Step 4 — neither verifies and no KCD supplied. Surface the
+        // (precursor) verification failure.
+        Err(AacsError::MediaKeyVerificationFailed)
+    }
+
+    /// Subset-Difference half of the pipeline: walk the MKB with a
+    /// Device Key and return the raw 16-byte value emitted by
+    /// `media_key_from_processing_key`. For a Type-3 MKB this is
+    /// the Media Key `K_m`; for a Type-4 MKB it is the Media Key
+    /// Precursor `K_mp` (which the caller post-processes with KCD).
+    ///
+    /// Returns [`AacsError::DeviceRevoked`] if no subset-difference
+    /// applies to the device, or
+    /// [`AacsError::MissingVerifyMediaKeyRecord`] if the MKB has no
+    /// `0x05` Media Key Data Record entry at the matching index.
+    ///
+    /// This is the cryptographic primitive callers reach for when
+    /// they want to make the verify / KCD decision themselves rather
+    /// than letting `derive_vuk_from_device_key_with_kcd` drive it.
+    pub fn derive_media_key_from_device_key(
+        &self,
+        device_key: &DeviceKey,
+    ) -> Result<[u8; 16], AacsError> {
         use crate::subdiff::{
             applies_to_device, derive_processing_key, media_key_from_processing_key,
             SubsetDifference,
         };
-        // Find the first explicit subset-difference that applies to
-        // this device's node.
-        let d_node = (device_key.uv << 1) | 1; // §3.2.3: "device node numbers are device numbers shifted left by 1, with the low-order bit set"
+        // §3.2.3: device node numbers are device numbers shifted left
+        // by 1, with the low-order bit set.
+        let d_node = (device_key.uv << 1) | 1;
         let mut chosen: Option<(usize, SubsetDifference)> = None;
         for (i, e) in self.mkb.explicit_subdiff.iter().enumerate() {
             let sd = SubsetDifference {
@@ -159,7 +241,6 @@ impl AacsVolume {
             }
         }
         let (idx, sd) = chosen.ok_or(AacsError::DeviceRevoked)?;
-        // Compute target_v_mask_zero_bits from sd's uv.
         let target_v_mask_zero_bits = sd.uv.trailing_zeros() as u8;
         let pk = derive_processing_key(
             &device_key.key,
@@ -174,10 +255,7 @@ impl AacsVolume {
             .media_key_data
             .get(idx)
             .ok_or(AacsError::MissingVerifyMediaKeyRecord)?;
-        let km = media_key_from_processing_key(&pk, sd.uv, &enc_km);
-        // Cross-check via Verify Media Key Record.
-        self.mkb.verify_media_key(&km)?;
-        Ok(crate::vuk::derive_vuk(&km, volume_id))
+        Ok(media_key_from_processing_key(&pk, sd.uv, &enc_km))
     }
 
     /// Unwrap every CPS Unit's title key using the supplied VUK.
