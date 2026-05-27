@@ -5,6 +5,41 @@ Content System) decryption layer used by Blu-ray Disc, per the
 publicly-published AACS LA technical specifications **Common Final
 0.953** (Oct 2012) and **BD-Prerecorded Final 0.953** (Oct 2012).
 
+Phase E (round 172) adds the Content Hash Table integrity-check layer
+per AACS BD-Prerecorded Final 0.953 §2.3:
+
+- **`cht::ContentHashTable::parse`** — Table 2-2 syntax parser
+  (per-Clip `Starting_HU_Num || Clip_Num || HU_Offset_in_Clip` header
+  followed by an `lsb_64(SHA-1(Hash_Unit))` body). The CHT file
+  doesn't carry its own counts; both `Number_of_Digests` and
+  `Number_of_HashUnits` come from the Content Certificate (Table 2-1)
+  and are passed in by the caller.
+- **`cht::compute_hash_value`** — the §2.3.2.1 hash equation
+  `[SHA-1(Hash_Unit)]_lsb_64`, computed over a 96-logical-sector
+  (`HASH_UNIT_SIZE = 96 * 2048` byte) Hash Unit. The encrypted
+  payload is hashed directly per spec — no decryption needed first.
+- **`cht::ContentHashTable::verify_hash_unit`** — looks up the stored
+  Hash_Value for `(clip_num, hu_in_clip)` on this layer, recomputes
+  the SHA-1 lsb_64, and surfaces a new
+  `AacsError::ContentHashMismatch { clip_num, hu_in_clip }` on
+  divergence. Correctly handles the §2.3.1 dual-layer "resume offset"
+  case where a Clip is split across both physical layers and the
+  Layer 1 row's `HU_Offset_in_Clip` continues from where Layer 0 left
+  off.
+- **`AacsVolume::load_content_hash_table(layer, n_digests, n_hus)`** —
+  reads `AACS/ContentHash00{0,1}.tbl` (with `AACS/DUPLICATE/`
+  fallback) and dispatches to the parser. `layer` is restricted to
+  `{0, 1}` since BD9/BD25 are at most dual-layer.
+
+Per §2.3.1 the "zero-sized CHT" case (no Clip ≥ 96 Logical Sectors on
+this layer) is accepted: an empty `.tbl` with `(0, 0)` counts parses
+to an empty `ContentHashTable`. The Content Certificate parser + the
+Content_Hash_Table_Digest cross-check (§2.3.2/§2.3.3) are NOT in this
+round — those need the AACS LA root public key for the
+`AACS_Verify(AACS_LA_pub, Content_Cert)` step, which is out of scope
+for the same reason as the MKB's `AACS_Verify` is (see "Out of scope"
+below).
+
 Phase D (round 127) wires the Type-4 MKB / Key Conversion Data path
 into the volume pipeline per AACS Common Final 0.953 §3.2.5.1.4 +
 BD-Prerecorded Final 0.953 §3.8:
@@ -159,6 +194,7 @@ consulted. No code or text from `libaacs`, `aacskeys`, `libbluray`,
 | `unit_key`            | —                      | §3.9.3                  |
 | `vuk`                 | —                      | §3.3                    |
 | `content`             | —                      | §3.10                   |
+| `cht`                 | —                      | §2.3                    |
 | `volume`              | —                      | §3.1, §3.9, Figure 3-5  |
 | `keydb`               | (de-facto community)   | —                       |
 
@@ -172,8 +208,13 @@ consulted. No code or text from `libaacs`, `aacskeys`, `libbluray`,
   verify primitives are still pending (Phase C).
 - ECDSA signature verification (`AACS_Verify(AACS_LA_pub, ...)`) —
   spec defines it but we don't need it to derive `Km`.
-- Content Hash Table verification (BD-Prerecorded §2.3) — SHA-1
-  integrity check; structurally documented.
+- Content Certificate parsing / `AACS_Verify` over `Content000.cer`
+  (BD-Prerecorded §2.1) — the certificate's outer ECDSA signature
+  needs the AACS LA root public key, same reason as MKB `AACS_Verify`
+  is out of scope. The CHT integrity-check layer landed in Phase E
+  (round 172); cross-checking each layer's `ContentHashTable` digest
+  against the certificate's `Content Hash Table Digest #N` row
+  (§2.3.2) is the remaining piece.
 - AACS 2.0 (Ultra HD Blu-ray) — separate spec family, not publicly
   released.
 - BD+ — separate copy-protection layer, not public.

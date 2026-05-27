@@ -34,6 +34,7 @@
 
 pub mod aes;
 pub mod ake;
+pub mod cht;
 pub mod content;
 pub mod ec;
 pub mod ecdsa;
@@ -50,6 +51,10 @@ pub use crate::ake::{
     build_signed_certificate, bus_key_from_point, host_authenticate, read_verified_volume_id,
     AkeResult, Certificate, DriveAuthState, HostCredentials, BUS_KEY_LEN, CERT_TYPE_DRIVE,
     CERT_TYPE_HOST,
+};
+pub use crate::cht::{
+    compute_hash_value, ContentHashTable, DigestRecord, DIGEST_RECORD_LEN, HASH_UNIT_SIZE,
+    HASH_VALUE_LEN,
 };
 pub use crate::content::{decrypt_aligned_unit, encrypt_aligned_unit, ALIGNED_UNIT_SIZE};
 pub use crate::ec::{Fp, Point, U160};

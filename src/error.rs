@@ -88,6 +88,19 @@ pub enum AacsError {
     /// excerpt of the offending line (truncated to 80 chars) plus a
     /// short description.
     HeaderParseError(String),
+    /// The SHA-1 hash of a Hash Unit (96 Logical Sectors of the
+    /// encrypted Clip AV stream) did not match the corresponding
+    /// 8-byte Hash_Value stored in `ContentHashNNN.tbl`
+    /// (BD-Prerecorded §2.3.2.1 + §2.3.3.1). Carries the failing
+    /// `(clip_num, hu_in_clip)` coordinate so a caller can correlate
+    /// the mismatch with the on-disc `BDMV/STREAM/<clip_num>.m2ts`.
+    ContentHashMismatch {
+        /// 5-digit Clip number whose Hash Unit failed.
+        clip_num: u32,
+        /// Hash-Unit offset *inside the Clip* (`byte_offset /
+        /// HASH_UNIT_SIZE`).
+        hu_in_clip: u32,
+    },
 }
 
 impl fmt::Display for AacsError {
@@ -137,6 +150,13 @@ impl fmt::Display for AacsError {
             Self::VolumeIdMacInvalid => f.write_str("transferred-ID CMAC mismatch under Bus Key"),
             Self::KeyDbParseError(line) => write!(f, "KEYDB.cfg parse error near: {line:?}"),
             Self::HeaderParseError(msg) => write!(f, "KEYDB.cfg header parse error: {msg}"),
+            Self::ContentHashMismatch {
+                clip_num,
+                hu_in_clip,
+            } => write!(
+                f,
+                "Content Hash Table SHA-1 mismatch for clip {clip_num:05} Hash Unit #{hu_in_clip}"
+            ),
         }
     }
 }

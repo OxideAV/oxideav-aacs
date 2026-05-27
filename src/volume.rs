@@ -27,6 +27,7 @@
 //! these files in `\AACS` directory cannot be read").
 
 use crate::aes::aes_128_ecb_decrypt;
+use crate::cht::ContentHashTable;
 use crate::content::{decrypt_aligned_unit, ALIGNED_UNIT_SIZE};
 use crate::error::AacsError;
 use crate::keydb::KeyDb;
@@ -266,6 +267,44 @@ impl AacsVolume {
             unit.title_key = Some(TitleKey(pt));
         }
         Ok(())
+    }
+
+    /// Load and parse the Content Hash Table for one physical layer
+    /// per BD-Prerecorded §2.3.
+    ///
+    /// `layer` is the layer number (0 for single-layer or the lower
+    /// layer of a dual-layer disc; 1 for the upper layer of a
+    /// dual-layer disc) — used to resolve the on-disc file name
+    /// `AACS/ContentHash000.tbl` vs `AACS/ContentHash001.tbl`.
+    ///
+    /// `number_of_digests` and `number_of_hash_units` come from the
+    /// layer's Content Certificate (Table 2-1). They are supplied by
+    /// the caller because this crate does not yet parse the Content
+    /// Certificate (`Content000.cer` / `Content001.cer`) — the
+    /// certificate's `AACS_Verify` signature step needs the AACS LA
+    /// root public key, which is out of scope for the same reason as
+    /// the MKB's `AACS_Verify` is.
+    ///
+    /// `AACS/DUPLICATE/` is consulted as fallback when the primary
+    /// file is unreadable, matching the [`Self::open`] behaviour.
+    pub fn load_content_hash_table(
+        &self,
+        layer: u8,
+        number_of_digests: u32,
+        number_of_hash_units: u32,
+    ) -> Result<ContentHashTable, AacsError> {
+        let name: &'static str = match layer {
+            0 => "ContentHash000.tbl",
+            1 => "ContentHash001.tbl",
+            _ => {
+                return Err(AacsError::InvalidValue {
+                    what: "ContentHashTable layer number (must be 0 or 1)",
+                    value: layer as u64,
+                })
+            }
+        };
+        let bytes = read_aacs_file(&self.disc_root, name)?;
+        ContentHashTable::parse(&bytes, number_of_digests, number_of_hash_units)
     }
 
     /// Decrypt one 6144-byte Aligned Unit using a CPS Unit that has

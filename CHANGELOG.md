@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Phase E: Content Hash Table parser + SHA-1 hash-unit verification
+
+Implements the integrity-check half of AACS BD-Prerecorded Final
+0.953 §2.3. A Licensed Player verifies on-disc Clip AV stream bytes
+by SHA-1-hashing 96-Logical-Sector "Hash Units" of the *encrypted*
+stream and comparing the least-significant 64 bits of each digest
+against the `Hash_Value` stored in `AACS/ContentHashNNN.tbl`.
+
+- **`cht` module** — new top-level module:
+  - `ContentHashTable::parse(bytes, number_of_digests,
+    number_of_hash_units)` per Table 2-2 syntax. Both counts are
+    supplied by the caller because they live in the Content
+    Certificate (`Content000.cer` / `Content001.cer`, §2.1 Table 2-1),
+    not in the `.tbl` file itself.
+  - `compute_hash_value(hash_unit) = [SHA-1(hash_unit)]_lsb_64` per
+    §2.3.2.1 — bytes 12..20 of the 20-byte SHA-1 digest.
+  - `HASH_UNIT_SIZE = 96 * 2048 = 196 608` bytes per §1.7 ("Hash
+    Unit: A Hash Unit consists of a series of 96 Logical Sectors").
+  - `DigestRecord { starting_hu_num, clip_num, hu_offset_in_clip }`
+    — one row per Clip AV stream file ≥ 96 Logical Sectors.
+  - `ContentHashTable::lookup_hash_value(clip_num, hu_in_clip)` —
+    handles the §2.3.1 dual-layer "resume offset" case where Layer 1's
+    `HU_Offset_in_Clip` is the count of HashUnits already covered on
+    Layer 0, returning `None` for in-clip indices owned by the other
+    layer.
+  - `ContentHashTable::verify_hash_unit(clip_num, hu_in_clip,
+    hash_unit)` — full lookup-then-compare; rejects wrong-sized Hash
+    Units, unknown `(clip_num, hu_in_clip)`, and SHA-1 mismatches.
+
+- **`AacsVolume::load_content_hash_table(layer, n_digests, n_hus)`** —
+  reads `AACS/ContentHash000.tbl` (`layer = 0`) or
+  `ContentHash001.tbl` (`layer = 1`) with `AACS/DUPLICATE/` fallback,
+  matching the `MKB_RO.inf` / `Unit_Key_RO.inf` discovery. Higher
+  layer numbers reject with `AacsError::InvalidValue` since BD9/BD25
+  are at most dual-layer per §1.9.
+
+- **New `AacsError::ContentHashMismatch { clip_num, hu_in_clip }`** —
+  carries the failing `(clip_num, hu_in_clip)` so a caller can
+  correlate the mismatch with the on-disc
+  `BDMV/STREAM/<clip_num:05>.m2ts`.
+
+Empty (`size = 0`) CHTs paired with `(0, 0)` counts parse cleanly per
+§2.3.1 ("the size of CHT is zero bytes if there is no Clip AV stream
+that has a file greater than or equal to 96 Logical Sectors on the
+corresponding layer"). Authoring-tail zero padding after the body is
+tolerated.
+
+#### Out of scope (this phase)
+
+- **Content Certificate (Table 2-1) parsing + `AACS_Verify` over the
+  `Content000.cer` signature data.** The certificate carries the per-
+  layer `Number_of_Digests` / `Number_of_HashUnits` that this CHT
+  parser consumes, but its outer ECDSA signature needs the AACS LA
+  root public key — out of scope for the same reason as the MKB's
+  `AACS_Verify`. Phase E callers supply the two counts directly.
+- **Content_Hash_Table_Digest cross-check (§2.3.2).** The Content
+  Certificate stores a SHA-1 over each layer's Hash_Values array
+  (`Content Hash Table Digest #N`); confirming this match needs the
+  certificate parser landed first.
+- **§2.3.3 verification policies** (random 7-of-N sampling on title
+  start, ≥1% sampling during playback) — playback-loop concerns, not
+  the CHT primitive itself.
+
+#### Tests
+
+- 13 new `cht` unit tests covering parse round-trip, zero-sized CHT,
+  authoring zero-padding tolerance, truncation rejection, non-zero
+  trailing junk rejection, `compute_hash_value` SHA-1 lsb_64
+  equivalence, single-clip indexing, dual-layer resume offset,
+  two-clips-on-one-layer indexing, verify round-trip, tamper
+  detection, wrong-sized input rejection, unknown-clip rejection.
+- 6 new `tests/synth_round2_cht.rs` integration tests round-tripping
+  the parser through `AacsVolume::load_content_hash_table` with
+  primary-and-DUPLICATE-fallback fixtures, dual-layer authoring,
+  zero-sized CHT, invalid-layer rejection, and an end-to-end "build
+  two Hash Units, author the CHT, parse via the volume, verify both
+  → tamper one → assert `ContentHashMismatch` with the failing
+  `(clip_num, hu_in_clip)`" scenario.
+
+No new external dependencies. No `oxideav-core` API change. The
+standalone (`--no-default-features`) build still passes.
+
 ### Added — Phase D: Type-4 MKB + Key Conversion Data post-processing
 
 Wires the AACS Common spec §3.2.5.1.4 + BD-Prerecorded §3.8 "Type-4
