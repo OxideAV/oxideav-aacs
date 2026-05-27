@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/OxideAV/oxideav-aacs/compare/v0.1.1...v0.1.2) - 2026-05-27
+
+### Other
+
+- Phase E — Content Hash Table parser + SHA-1 hash-unit verification (BD-Prerecorded 0.953 §2.3)
+- Phase D: Type-4 MKB + Key Conversion Data post-processing (AACS Common 0.953 §3.2.5.1.4 + BD-Prerecorded §3.8)
+
 ### Added — Phase E: Content Hash Table parser + SHA-1 hash-unit verification
 
 Implements the integrity-check half of AACS BD-Prerecorded Final
