@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/OxideAV/oxideav-aacs/compare/v0.1.1...v0.1.2) - 2026-05-29
+
+### Other
+
+- Content Hash Table parse + Hash-Unit integrity verify (BD-Prerecorded §2.3)
+- AACS_Verify integration for §3.2.5.1.2/.3/.8 signature records
+- paraphrase external-implementation citations in src/
+- READ_DISC_STRUCTURE Format 0x81/0x82/0x83 sub-payload constructors + parsers (AACS Common §4.14.3.2 / §4.14.3.3 / §4.14.3.4)
+- Phase D: Type-4 MKB + Key Conversion Data post-processing (AACS Common 0.953 §3.2.5.1.4 + BD-Prerecorded §3.8)
+
 ### Added — Content Hash Table parsing + Hash-Unit integrity verification (BD-Prerecorded §2.3)
 
 New `cht` module implementing the Content Hash Table (CHT) integrity
