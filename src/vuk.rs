@@ -29,10 +29,11 @@ pub fn derive_vuk(media_key: &[u8; 16], volume_id: &[u8; 16]) -> Vuk {
 /// Derive the 20-byte KEYDB.cfg disc identifier from the bytes of the
 /// disc's on-disc unit-key file.
 ///
-/// AACS LA itself doesn't define a "disc_id" — that concept is a
-/// libbluray / libaacs invention for keying off-line VUK databases.
-/// Every KEYDB.cfg in the wild uses SHA-1 of the unit-key file bytes
-/// (libaacs's `_calc_title_hash` / `aacs_get_disc_id`):
+/// AACS LA itself doesn't define a "disc_id"; the concept is the
+/// de-facto community keying convention used by the KEYDB.cfg format
+/// documented under `docs/container/aacs/keydb-cfg-format.md`. The
+/// convention is the unmodified SHA-1 of the unit-key file's raw
+/// bytes:
 ///
 /// ```text
 /// disc_id = SHA-1(unit_key_file_bytes)
@@ -53,8 +54,8 @@ pub fn derive_vuk(media_key: &[u8; 16], volume_id: &[u8; 16]) -> Vuk {
 /// For BD-ROM the canonical fallback path is `AACS/DUPLICATE/Unit_Key_RO.inf`
 /// per BD-Prerecorded §2.1 (the duplicate copy mirror's content).
 ///
-/// Pass the whole file's bytes — no skipping headers, no padding
-/// stripped. Libaacs hashes the file verbatim.
+/// Pass the whole file's bytes — no header skipping, no padding
+/// stripping.
 pub fn disc_id_from_unit_key_file_bytes(bytes: &[u8]) -> [u8; 20] {
     use sha1::{Digest, Sha1};
     let mut h = Sha1::new();

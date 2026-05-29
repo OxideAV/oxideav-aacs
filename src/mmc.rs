@@ -15,8 +15,7 @@
 //! All byte layouts are taken from the publicly-hosted T10 working
 //! drafts of **MMC-6 r02g** + **SPC-3 r23** (staged in
 //! `docs/container/aacs/mmc/`) cross-referenced against the AACS LA
-//! **Common Final 0.953** spec (`docs/container/aacs/`). No external
-//! library source (libaacs, libbluray, etc.) was consulted.
+//! **Common Final 0.953** spec (`docs/container/aacs/`).
 //!
 //! # Layering
 //!

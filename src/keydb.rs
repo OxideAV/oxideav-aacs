@@ -1,12 +1,13 @@
-//! KEYDB.cfg parser — the de-facto community AACS key-material database
-//! file used by libaacs / libbluray / makemkv and similar tools.
+//! KEYDB.cfg parser — the de-facto community AACS key-material
+//! database file format described in
+//! `docs/container/aacs/keydb-cfg-format.md`.
 //!
 //! Two on-disk shapes are accepted:
 //!
-//! 1. **Per-disc legacy form** (`<DISC_ID>=V <VUK> | label`), the
-//!    original libbluray syntax. See [`KeyDbEntry`].
-//! 2. **`|`-leader record form** introduced in libaacs and documented
-//!    in `docs/container/aacs/keydb-cfg-format.md`. Lines of the form
+//! 1. **Per-disc legacy form** (`<DISC_ID>=V <VUK> | label`). See
+//!    [`KeyDbEntry`].
+//! 2. **`|`-leader record form** documented in
+//!    `docs/container/aacs/keydb-cfg-format.md`. Lines of the form
 //!
 //!    ```text
 //!    | <TYPE> | <FIELDS...> ; <comment>
@@ -18,9 +19,9 @@
 //!
 //! `;` introduces a comment to end-of-line. Empty lines are ignored.
 //!
-//! The implementation here was written *from the format-doc + the AACS
-//! LA Common Final 0.953 PDF* alone. No libaacs / aacskeys / libbluray
-//! / makemkv source was consulted.
+//! The implementation here was written from the format-doc at
+//! `docs/container/aacs/keydb-cfg-format.md` and the AACS LA Common
+//! Final 0.953 PDF only.
 
 use crate::error::AacsError;
 use crate::vuk::Vuk;
@@ -38,7 +39,7 @@ pub struct KeyDbEntry {
     pub label: Option<String>,
     /// Optional pre-unwrapped CPS Unit Title Keys, indexed by CPS
     /// Unit number (1-based). Present when the source KEYDB.cfg
-    /// line was in the extended libbluray/aacskeys format with
+    /// line was in the extended pipe-tokenised per-disc form with
     /// `U | 1-0x<key> | 2-0x<key> | ...` tokens — lets the consumer
     /// skip the VUK→title-key AES-ECB unwrap step entirely.
     pub unit_keys: Vec<(u16, [u8; 16])>,
@@ -173,9 +174,8 @@ impl KeyDb {
     /// Parse a KEYDB.cfg byte stream from a `&str`.
     ///
     /// Real-world KEYDB.cfg files mix many ad-hoc line forms — banner
-    /// comments, Processing Key records, custom header lines from
-    /// AnyDVD/MakeMKV exports, etc. The parser dispatches on the
-    /// first non-whitespace character:
+    /// comments, Processing Key records, custom export headers, etc.
+    /// The parser dispatches on the first non-whitespace character:
     ///
     /// - `|` → `|`-leader record (DK / PK / HC / DC / VID / VUK / MEK
     ///   / TK / KCD / DISCID), parsed per
@@ -250,8 +250,8 @@ impl KeyDb {
     /// Search order:
     /// 1. `$OXIDEAV_AACS_KEYDB` if set.
     /// 2. macOS only: `$HOME/Library/Preferences/aacs/KEYDB.cfg` —
-    ///    the native macOS user-defaults location libbluray + similar
-    ///    tools use on Apple platforms.
+    ///    the conventional macOS user-defaults location for AACS
+    ///    key databases on Apple platforms.
     /// 3. `$XDG_CONFIG_HOME/aacs/KEYDB.cfg`.
     /// 4. Each entry in `$XDG_CONFIG_DIRS` (`:`-split) +
     ///    `aacs/KEYDB.cfg`.
@@ -384,8 +384,9 @@ fn default_search_paths() -> Vec<std::path::PathBuf> {
 
 // ---- legacy `<DISC_ID>=V<VUK>` parser -----------------------------------
 
-/// Parse one legacy `<DISC_ID>=V<VUK>` (or extended libbluray-form)
-/// line. Returns `KeyDbParseError` on failure.
+/// Parse one legacy `<DISC_ID>=V<VUK>` line (also accepting the
+/// extended pipe-tokenised per-disc form). Returns `KeyDbParseError`
+/// on failure.
 fn parse_legacy_line(line: &str) -> Result<KeyDbEntry, AacsError> {
     let (disc_id_text, rhs) = match line.split_once('=') {
         Some(parts) => parts,
@@ -1064,11 +1065,11 @@ mod tests {
         assert_eq!(entry.label.as_deref(), Some("OK"));
     }
 
-    /// Extended libbluray/aacskeys format: `0x`-prefixed disc-id +
+    /// Extended pipe-tokenised per-disc form: `0x`-prefixed disc-id +
     /// pipe-tokenised single-char flags (D/M/I/V/U) introducing each
     /// value, plus `<id>-0x<hex>` Unit Keys after `U`.
     #[test]
-    fn parses_extended_libbluray_format() {
+    fn parses_extended_pipe_tokenised_per_disc_form() {
         let text = "0x0123456789ABCDEF0123456789ABCDEF01234567 = Test Title \
                     | D | 2017-10-12 \
                     | M | 0x6D6284E100C23949F40559732EA541CE \
