@@ -60,11 +60,13 @@ pub use crate::keydb::{
 };
 pub use crate::mkb::{Mkb, MkbType, RevocationEntry, SubsetDifferenceEntry};
 pub use crate::mmc::{
-    build_send_key_host_cert_chal, build_send_key_host_key, parse_report_key_agid,
+    build_send_key_host_cert_chal, build_send_key_host_key, parse_media_id_response,
+    parse_media_serial_response, parse_mkb_pack_response, parse_report_key_agid,
     parse_report_key_drive_cert, parse_report_key_drive_cert_chal, parse_report_key_drive_key,
     parse_send_key_host_cert_chal, parse_send_key_host_key, parse_volume_id_response, AgidResponse,
     DataDirection, DriveCertChallengeResponse, DriveCertResponse, DriveCommand, DriveKeyResponse,
-    MockDrive, ReadDiscStructure, ReportKey, ScsiResponse, SendKey, VolumeIdResponse,
+    MediaIdentifierResponse, MediaSerialNumberResponse, MkbPackResponse, MockDrive,
+    ReadDiscStructure, ReportKey, ScsiResponse, SendKey, VolumeIdResponse,
 };
 pub use crate::subdiff::{
     aes_g3, applies_to_device, apply_key_conversion_data, derive_processing_key, SubsetDifference,

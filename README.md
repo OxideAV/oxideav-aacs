@@ -66,7 +66,10 @@ Phase B (round 93) adds the SCSI MMC drive-command wire layer:
   Challenge (`Hn` + Host Cert), Host Key (`Hv` + `Hsig`),
   Invalidate-AGID.
 - Volume Identifier read via `READ_DISC_STRUCTURE` Format `0x80`
-  (32-byte `Volume ID || MAC`).
+  (32-byte `Volume ID || MAC`); Pre-recorded Media Serial Number
+  (Format `0x81`, §4.14.3.2 Table 4-16), Media Identifier (Format
+  `0x82`, §4.14.3.3 Table 4-17), and Media Key Block Pack (Format
+  `0x83`, §4.14.3.4 Table 4-18) constructors + response decoders.
 - `DriveCommand` trait abstraction over the SCSI pass-through
   surface (`SG_IO` / `IOSCSITaskDeviceInterface` /
   `IOCTL_SCSI_PASS_THROUGH_DIRECT`) — Phase B ships only the trait

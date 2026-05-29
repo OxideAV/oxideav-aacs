@@ -44,6 +44,9 @@
 //! | `build_send_key_host_cert_chal`          | Table 606            | 4.14.4.1, Table 4-24     |
 //! | `build_send_key_host_key`                | Table 607            | 4.14.4.2, Table 4-25     |
 //! | `parse_volume_id_response`               | Table 384            | 4.14.3.1, Table 4-15     |
+//! | `parse_media_serial_response`            | Table 384            | 4.14.3.2, Table 4-16     |
+//! | `parse_media_id_response`                | Table 384            | 4.14.3.3, Table 4-17     |
+//! | `parse_mkb_pack_response`                | Table 384            | 4.14.3.4, Table 4-18     |
 //!
 //! # Notes on the workspace `docs/container/aacs/mmc/README.md`
 //!
@@ -502,13 +505,31 @@ impl ReadDiscStructure {
     }
 
     /// Constructor for the AACS Pre-recorded Media Serial Number
-    /// read (Format `0x81`).
+    /// (PMSN) read (Format `0x81`, AACS Common §4.14.3.2 Table 4-16).
+    /// Returns 36 bytes (4-byte header + 16-byte PMSN + 16-byte MAC).
     pub fn aacs_media_serial(agid: u8) -> Self {
         Self {
             media_type: MEDIA_TYPE_BD,
             address: 0,
             layer_number: 0,
             format: FORMAT_AACS_MEDIA_SERIAL,
+            allocation_length: 36,
+            agid: agid & 0x03,
+            control: 0,
+        }
+    }
+
+    /// Constructor for the AACS Media Identifier read (Format `0x82`,
+    /// AACS Common §4.14.3.3 Table 4-17). Returns 36 bytes (4-byte
+    /// header + 16-byte Media Identifier + 16-byte MAC) — same wire
+    /// layout as the Volume Identifier (Table 4-15) and the PMSN
+    /// (Table 4-16).
+    pub fn aacs_media_id(agid: u8) -> Self {
+        Self {
+            media_type: MEDIA_TYPE_BD,
+            address: 0,
+            layer_number: 0,
+            format: FORMAT_AACS_MEDIA_ID,
             allocation_length: 36,
             agid: agid & 0x03,
             control: 0,
@@ -636,6 +657,49 @@ pub struct VolumeIdResponse {
     pub mac: [u8; ID_MAC_LEN],
 }
 
+/// Decoded AACS Pre-recorded Media Serial Number (PMSN) response
+/// (MMC-6 Table 384; AACS Common §4.14.3.2 Table 4-16). 36 bytes on
+/// the wire — 4-byte header + 16-byte PMSN + 16-byte MAC. The MAC
+/// is `Dm = CMAC(BK, PMSN)` per §4.5 step 3.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediaSerialNumberResponse {
+    /// 128-bit Pre-recorded Media Serial Number.
+    pub pmsn: [u8; VOLUME_ID_LEN],
+    /// 128-bit MAC over the PMSN keyed under the Bus Key.
+    pub mac: [u8; ID_MAC_LEN],
+}
+
+/// Decoded AACS Media Identifier response (MMC-6 Table 384; AACS
+/// Common §4.14.3.3 Table 4-17). 36 bytes on the wire — 4-byte
+/// header + 16-byte Media Identifier + 16-byte MAC. The MAC is
+/// `Dm = CMAC(BK, MediaID)` per §4.6 step 3.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediaIdentifierResponse {
+    /// 128-bit Media Identifier.
+    pub media_id: [u8; VOLUME_ID_LEN],
+    /// 128-bit MAC over the Media Identifier keyed under the Bus Key.
+    pub mac: [u8; ID_MAC_LEN],
+}
+
+/// Decoded AACS Media Key Block Pack response (MMC-6 Table 384; AACS
+/// Common §4.14.3.4 Table 4-18). Variable size on the wire: 4-byte
+/// header `[length:u16][reserved:u8][total_packs:u8]` followed by
+/// up to 32,768 bytes of MKB pack data. The MKB itself is *not*
+/// AACS-LA-bus-encrypted (the spec note in §4.14.3.4 is explicit:
+/// "the Media Key Block is transferred without using the AACS
+/// authentication process").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MkbPackResponse {
+    /// Total number of MKB packs the drive can return for this disc
+    /// (ceiling of `MKB-data-length / 32,768`). Packs are addressed by
+    /// `pack_number = 0..total_packs - 1` via the `Address` field of
+    /// the [`ReadDiscStructure`] CDB.
+    pub total_packs: u8,
+    /// MKB pack data, up to 32,768 bytes. The last pack may end with
+    /// zero-padding.
+    pub pack_data: Vec<u8>,
+}
+
 // ---------------------------------------------------------------------
 // Response parsers
 // ---------------------------------------------------------------------
@@ -752,6 +816,83 @@ pub fn parse_volume_id_response(buf: &[u8]) -> Result<VolumeIdResponse, AacsErro
     let mut mac = [0u8; ID_MAC_LEN];
     mac.copy_from_slice(&buf[20..20 + ID_MAC_LEN]);
     Ok(VolumeIdResponse { volume_id, mac })
+}
+
+/// Parse the 36-byte response payload for `READ_DISC_STRUCTURE`
+/// Format `0x81` (AACS Pre-recorded Media Serial Number) per MMC-6
+/// Table 384 / AACS Common §4.14.3.2 Table 4-16. The wire layout is
+/// `[length:u16=0x0022][reserved:u16][PMSN:16][MAC:16]`.
+pub fn parse_media_serial_response(buf: &[u8]) -> Result<MediaSerialNumberResponse, AacsError> {
+    let length = read_u16_be(buf, "PMSN response header")?;
+    if length != 0x0022 {
+        return Err(AacsError::InvalidValue {
+            what: "PMSN response length",
+            value: length as u64,
+        });
+    }
+    if buf.len() < 36 {
+        return Err(AacsError::Truncated("PMSN response payload"));
+    }
+    let mut pmsn = [0u8; VOLUME_ID_LEN];
+    pmsn.copy_from_slice(&buf[4..4 + VOLUME_ID_LEN]);
+    let mut mac = [0u8; ID_MAC_LEN];
+    mac.copy_from_slice(&buf[20..20 + ID_MAC_LEN]);
+    Ok(MediaSerialNumberResponse { pmsn, mac })
+}
+
+/// Parse the 36-byte response payload for `READ_DISC_STRUCTURE`
+/// Format `0x82` (AACS Media Identifier) per MMC-6 Table 384 / AACS
+/// Common §4.14.3.3 Table 4-17. The wire layout is identical to
+/// Volume ID and PMSN: `[length:u16=0x0022][reserved:u16]
+/// [Media ID:16][MAC:16]`.
+pub fn parse_media_id_response(buf: &[u8]) -> Result<MediaIdentifierResponse, AacsError> {
+    let length = read_u16_be(buf, "Media ID response header")?;
+    if length != 0x0022 {
+        return Err(AacsError::InvalidValue {
+            what: "Media ID response length",
+            value: length as u64,
+        });
+    }
+    if buf.len() < 36 {
+        return Err(AacsError::Truncated("Media ID response payload"));
+    }
+    let mut media_id = [0u8; VOLUME_ID_LEN];
+    media_id.copy_from_slice(&buf[4..4 + VOLUME_ID_LEN]);
+    let mut mac = [0u8; ID_MAC_LEN];
+    mac.copy_from_slice(&buf[20..20 + ID_MAC_LEN]);
+    Ok(MediaIdentifierResponse { media_id, mac })
+}
+
+/// Parse the variable-length response payload for `READ_DISC_STRUCTURE`
+/// Format `0x83` (AACS Media Key Block Pack) per MMC-6 Table 384 /
+/// AACS Common §4.14.3.4 Table 4-18.
+///
+/// Wire layout: `[length:u16][reserved:u8][total_packs:u8]
+/// [pack_data: ≤32,768 bytes]`. The two-byte `length` field measures
+/// everything after itself (the trailing `2 + length` bytes), per the
+/// MMC-6 convention. `total_packs` is the ceiling of MKB total length
+/// divided by 32,768.
+pub fn parse_mkb_pack_response(buf: &[u8]) -> Result<MkbPackResponse, AacsError> {
+    let length = read_u16_be(buf, "MKB pack response header")? as usize;
+    if length < 2 {
+        return Err(AacsError::InvalidValue {
+            what: "MKB pack response length",
+            value: length as u64,
+        });
+    }
+    // 4-byte header (length:u16 + reserved:u8 + total_packs:u8); pack
+    // body length = length - 2 (the two-byte `length` field counts the
+    // remaining `reserved:u8 + total_packs:u8 + pack_data` bytes).
+    let body_len = length - 2;
+    if buf.len() < 4 + body_len {
+        return Err(AacsError::Truncated("MKB pack response payload"));
+    }
+    let total_packs = buf[3];
+    let pack_data = buf[4..4 + body_len].to_vec();
+    Ok(MkbPackResponse {
+        total_packs,
+        pack_data,
+    })
 }
 
 // ---------------------------------------------------------------------
@@ -928,6 +1069,18 @@ pub struct MockDrive {
     pub volume_id: [u8; VOLUME_ID_LEN],
     /// 128-bit MAC accompanying the Volume ID.
     pub volume_id_mac: [u8; ID_MAC_LEN],
+    /// 128-bit Pre-recorded Media Serial Number returned for Format
+    /// `0x81`. (§4.14.3.2)
+    pub media_serial_number: [u8; VOLUME_ID_LEN],
+    /// 128-bit MAC over the PMSN. In `auth` mode the mock recomputes
+    /// it from the Bus Key per §4.5; this field is the fallback.
+    pub media_serial_mac: [u8; ID_MAC_LEN],
+    /// 128-bit Media Identifier returned for Format `0x82`.
+    /// (§4.14.3.3)
+    pub media_identifier: [u8; VOLUME_ID_LEN],
+    /// 128-bit MAC over the Media Identifier; in `auth` mode the mock
+    /// recomputes it from the Bus Key per §4.6.
+    pub media_id_mac: [u8; ID_MAC_LEN],
     /// SEND KEY Host Certificate Challenge payload captured from the
     /// last `aacs_host_cert_challenge` issued. `None` until the host
     /// pushes one.
@@ -956,6 +1109,10 @@ impl Default for MockDrive {
             drive_dsig: [0u8; EC_SIG_LEN],
             volume_id: [0u8; VOLUME_ID_LEN],
             volume_id_mac: [0u8; ID_MAC_LEN],
+            media_serial_number: [0u8; VOLUME_ID_LEN],
+            media_serial_mac: [0u8; ID_MAC_LEN],
+            media_identifier: [0u8; VOLUME_ID_LEN],
+            media_id_mac: [0u8; ID_MAC_LEN],
             last_host_cert_chal: None,
             last_host_key: None,
             agid_invalidated: false,
@@ -1009,6 +1166,22 @@ impl MockDrive {
         for (i, b) in volume_id_mac.iter_mut().enumerate() {
             *b = 0x40 ^ (i as u8);
         }
+        let mut media_serial_number = [0u8; VOLUME_ID_LEN];
+        for (i, b) in media_serial_number.iter_mut().enumerate() {
+            *b = 0x70 | (i as u8);
+        }
+        let mut media_serial_mac = [0u8; ID_MAC_LEN];
+        for (i, b) in media_serial_mac.iter_mut().enumerate() {
+            *b = 0x50 ^ (i as u8);
+        }
+        let mut media_identifier = [0u8; VOLUME_ID_LEN];
+        for (i, b) in media_identifier.iter_mut().enumerate() {
+            *b = 0x30 | (i as u8);
+        }
+        let mut media_id_mac = [0u8; ID_MAC_LEN];
+        for (i, b) in media_id_mac.iter_mut().enumerate() {
+            *b = 0x60 ^ (i as u8);
+        }
         Self {
             agid_to_return: 1,
             drive_nonce,
@@ -1017,6 +1190,10 @@ impl MockDrive {
             drive_dsig,
             volume_id,
             volume_id_mac,
+            media_serial_number,
+            media_serial_mac,
+            media_identifier,
+            media_id_mac,
             last_host_cert_chal: None,
             last_host_key: None,
             agid_invalidated: false,
@@ -1158,6 +1335,36 @@ impl DriveCommand for MockDrive {
                         out.extend_from_slice(&mac);
                         Ok(ScsiResponse::good(out))
                     }
+                    FORMAT_AACS_MEDIA_SERIAL => {
+                        // §4.5 step 3: Dm = CMAC(BK, PMSN).
+                        let mac: [u8; ID_MAC_LEN] = match &self.auth {
+                            Some(a) if a.bus_key.is_some() => crate::aes::aes_128_cmac(
+                                &a.bus_key.unwrap(),
+                                &self.media_serial_number,
+                            ),
+                            _ => self.media_serial_mac,
+                        };
+                        let mut out = Vec::with_capacity(36);
+                        out.extend_from_slice(&[0x00, 0x22, 0x00, 0x00]);
+                        out.extend_from_slice(&self.media_serial_number);
+                        out.extend_from_slice(&mac);
+                        Ok(ScsiResponse::good(out))
+                    }
+                    FORMAT_AACS_MEDIA_ID => {
+                        // §4.6 step 3: Dm = CMAC(BK, MediaID).
+                        let mac: [u8; ID_MAC_LEN] = match &self.auth {
+                            Some(a) if a.bus_key.is_some() => crate::aes::aes_128_cmac(
+                                &a.bus_key.unwrap(),
+                                &self.media_identifier,
+                            ),
+                            _ => self.media_id_mac,
+                        };
+                        let mut out = Vec::with_capacity(36);
+                        out.extend_from_slice(&[0x00, 0x22, 0x00, 0x00]);
+                        out.extend_from_slice(&self.media_identifier);
+                        out.extend_from_slice(&mac);
+                        Ok(ScsiResponse::good(out))
+                    }
                     other => Err(AacsError::InvalidValue {
                         what: "MockDrive READ_DISC_STRUCTURE Format",
                         value: other as u64,
@@ -1259,5 +1466,96 @@ mod tests {
             let parsed = ReportKey::parse_cdb(&cdb).unwrap();
             assert_eq!(parsed.agid, agid);
         }
+    }
+
+    #[test]
+    fn media_serial_cdb_uses_format_0x81() {
+        let rds = ReadDiscStructure::aacs_media_serial(2);
+        let cdb = rds.cdb();
+        assert_eq!(cdb[0], READ_DISC_STRUCTURE_OPCODE);
+        assert_eq!(cdb[7], FORMAT_AACS_MEDIA_SERIAL);
+        // 36-byte allocation length = 0x0024.
+        assert_eq!(cdb[8], 0x00);
+        assert_eq!(cdb[9], 0x24);
+        // AGID=2 occupies bits 7..6.
+        assert_eq!(cdb[10] >> 6, 2);
+    }
+
+    #[test]
+    fn media_id_cdb_uses_format_0x82() {
+        let rds = ReadDiscStructure::aacs_media_id(3);
+        let cdb = rds.cdb();
+        assert_eq!(cdb[0], READ_DISC_STRUCTURE_OPCODE);
+        assert_eq!(cdb[7], FORMAT_AACS_MEDIA_ID);
+        assert_eq!(cdb[8], 0x00);
+        assert_eq!(cdb[9], 0x24);
+        assert_eq!(cdb[10] >> 6, 3);
+    }
+
+    #[test]
+    fn media_serial_response_parser_round_trip() {
+        let pmsn = [0xAA; VOLUME_ID_LEN];
+        let mac = [0x55; ID_MAC_LEN];
+        let mut wire = Vec::with_capacity(36);
+        wire.extend_from_slice(&[0x00, 0x22, 0x00, 0x00]);
+        wire.extend_from_slice(&pmsn);
+        wire.extend_from_slice(&mac);
+        let parsed = parse_media_serial_response(&wire).unwrap();
+        assert_eq!(parsed.pmsn, pmsn);
+        assert_eq!(parsed.mac, mac);
+    }
+
+    #[test]
+    fn media_id_response_parser_round_trip() {
+        let mid = [0x33; VOLUME_ID_LEN];
+        let mac = [0xCC; ID_MAC_LEN];
+        let mut wire = Vec::with_capacity(36);
+        wire.extend_from_slice(&[0x00, 0x22, 0x00, 0x00]);
+        wire.extend_from_slice(&mid);
+        wire.extend_from_slice(&mac);
+        let parsed = parse_media_id_response(&wire).unwrap();
+        assert_eq!(parsed.media_id, mid);
+        assert_eq!(parsed.mac, mac);
+    }
+
+    #[test]
+    fn media_serial_parser_rejects_wrong_length_field() {
+        let mut wire = vec![0x00, 0x10, 0x00, 0x00];
+        wire.resize(36, 0);
+        assert!(parse_media_serial_response(&wire).is_err());
+    }
+
+    #[test]
+    fn media_id_parser_rejects_truncated_payload() {
+        let wire = [0x00, 0x22, 0x00, 0x00, 0xAA, 0xBB];
+        assert!(parse_media_id_response(&wire).is_err());
+    }
+
+    #[test]
+    fn mkb_pack_response_parser_round_trip() {
+        // Synthetic 32-byte MKB pack body. Per Table 4-18 the length
+        // field counts the trailing reserved(1) + total_packs(1) +
+        // pack_data(N) bytes — i.e. length = 2 + N.
+        let pack_data: Vec<u8> = (0..32u8).collect();
+        let total_packs = 5u8;
+        let length: u16 = (2 + pack_data.len()) as u16;
+        let mut wire = vec![
+            (length >> 8) as u8,
+            (length & 0xFF) as u8,
+            0x00, // reserved
+            total_packs,
+        ];
+        wire.extend_from_slice(&pack_data);
+        let parsed = parse_mkb_pack_response(&wire).unwrap();
+        assert_eq!(parsed.total_packs, total_packs);
+        assert_eq!(parsed.pack_data, pack_data);
+    }
+
+    #[test]
+    fn mkb_pack_parser_rejects_truncated_payload() {
+        // Claims 100 bytes of pack data but the buffer is empty after
+        // the 4-byte header.
+        let wire = [0x00, 0x66, 0x00, 0x01];
+        assert!(parse_mkb_pack_response(&wire).is_err());
     }
 }

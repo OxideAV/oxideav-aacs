@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — `READ_DISC_STRUCTURE` Format `0x81`/`0x82`/`0x83` sub-payloads
+
+Closes the §4.14.3.2 (Pre-recorded Media Serial Number / PMSN),
+§4.14.3.3 (Media Identifier), and §4.14.3.4 (Media Key Block Pack)
+sub-payload gap that Phase B left as Format-Code constants without
+matching CDB constructors, response decoders, or `MockDrive` service.
+
+- **`ReadDiscStructure::aacs_media_id(agid)`** — CDB builder for
+  Format Code `0x82` (Media Identifier) per AACS Common §4.14.3.3
+  Table 4-17. Same on-wire layout as the Volume Identifier and PMSN
+  reads: 36-byte response with `[length=0x0022:u16][reserved:u16]
+  [Media ID:16][MAC:16]`.
+- **`parse_media_serial_response`** + **`MediaSerialNumberResponse`**
+  — Format `0x81` decoder per Table 4-16. The MAC byte field is
+  `Dm = CMAC(BK, PMSN)` per §4.5 step 3.
+- **`parse_media_id_response`** + **`MediaIdentifierResponse`** —
+  Format `0x82` decoder per Table 4-17 / Table 4-15 layout. The MAC
+  is `Dm = CMAC(BK, MediaID)` per §4.6 step 3.
+- **`parse_mkb_pack_response`** + **`MkbPackResponse`** — Format
+  `0x83` decoder per Table 4-18, with variable-length pack body up
+  to 32,768 bytes. Returns the `total_packs` count alongside the
+  pack data. (Per §4.14.3.4 the MKB itself is *not* bus-encrypted —
+  the spec note is explicit about this.)
+- **`MockDrive`** grows four new fields — `media_serial_number`,
+  `media_serial_mac`, `media_identifier`, `media_id_mac` — populated
+  with deterministic patterns by `with_test_fixture()`. The
+  `READ_DISC_STRUCTURE_OPCODE` dispatch arm now serves Format
+  `0x81` and `0x82` with the same auth-vs-static MAC selection the
+  Volume ID path already uses: when `auth.bus_key` is `Some`, the
+  mock recomputes `Dm = CMAC(BK, ID)` per §4.5 / §4.6; otherwise it
+  returns the fixture-MAC bytes.
+
+New tests:
+
+- 7 new unit tests in `mmc.rs`: PMSN/Media-ID CDB-byte-layout
+  invariants, response-parser round trips, length-field /
+  truncated-payload rejection, and the MKB-pack length-counting
+  semantics.
+- 4 new integration tests in `tests/synth_phaseb_mmc.rs`: PMSN +
+  Media-ID `MockDrive` end-to-end round trips, an unknown-format
+  rejection, and an MKB-pack hand-built-wire round trip (since the
+  MKB body is not bus-encrypted, hand-stuffed wire bytes are the
+  right level for the Phase B sub-payload layer).
+
+No new dependencies, no `oxideav-core` API change, no docs-gap (all
+three sub-payloads are in `docs/container/aacs/`
+`AACS_Spec_Common_Final_0953.pdf` Tables 4-16 / 4-17 / 4-18). The
+crate's standalone (no-default features) build still passes.
+
 ### Added — Phase D: Type-4 MKB + Key Conversion Data post-processing
 
 Wires the AACS Common spec §3.2.5.1.4 + BD-Prerecorded §3.8 "Type-4

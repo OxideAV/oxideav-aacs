@@ -7,7 +7,8 @@
 //! file or randomly generated.
 
 use oxideav_aacs::{
-    build_send_key_host_cert_chal, build_send_key_host_key, parse_report_key_agid,
+    build_send_key_host_cert_chal, build_send_key_host_key, parse_media_id_response,
+    parse_media_serial_response, parse_mkb_pack_response, parse_report_key_agid,
     parse_report_key_drive_cert, parse_report_key_drive_cert_chal, parse_report_key_drive_key,
     parse_send_key_host_cert_chal, parse_send_key_host_key, parse_volume_id_response,
     DataDirection, DriveCommand, MockDrive, ReadDiscStructure, ReportKey, SendKey,
@@ -233,4 +234,72 @@ fn volume_id_parse_rejects_wrong_length_field() {
     let mut wire = vec![0x00, 0x10, 0x00, 0x00]; // 0x0010 instead of 0x0022
     wire.resize(36, 0);
     assert!(parse_volume_id_response(&wire).is_err());
+}
+
+#[test]
+fn read_disc_structure_media_serial_roundtrip_through_mock_drive() {
+    let mut drive = MockDrive::with_test_fixture();
+    let cdb = ReadDiscStructure::aacs_media_serial(2).cdb();
+    let response = drive
+        .execute(&cdb, DataDirection::FromDevice, &[], 36)
+        .expect("MockDrive must accept READ_DISC_STRUCTURE PMSN");
+    assert_eq!(response.data.len(), 36);
+    assert_eq!(response.data[0], 0x00);
+    assert_eq!(response.data[1], 0x22);
+    let pmsn = parse_media_serial_response(&response.data).unwrap();
+    assert_eq!(pmsn.pmsn, drive.media_serial_number);
+    assert_eq!(pmsn.mac, drive.media_serial_mac);
+}
+
+#[test]
+fn read_disc_structure_media_id_roundtrip_through_mock_drive() {
+    let mut drive = MockDrive::with_test_fixture();
+    let cdb = ReadDiscStructure::aacs_media_id(3).cdb();
+    let response = drive
+        .execute(&cdb, DataDirection::FromDevice, &[], 36)
+        .expect("MockDrive must accept READ_DISC_STRUCTURE Media ID");
+    assert_eq!(response.data.len(), 36);
+    assert_eq!(response.data[0], 0x00);
+    assert_eq!(response.data[1], 0x22);
+    let mid = parse_media_id_response(&response.data).unwrap();
+    assert_eq!(mid.media_id, drive.media_identifier);
+    assert_eq!(mid.mac, drive.media_id_mac);
+}
+
+#[test]
+fn read_disc_structure_unknown_format_is_rejected() {
+    let mut drive = MockDrive::with_test_fixture();
+    let mut cdb = ReadDiscStructure::aacs_volume_id(0).cdb();
+    // Replace format byte with an undefined AACS Format Code.
+    cdb[7] = 0x84; // §4.14.3.5 Returning the Data Keys — not modelled.
+    let err = drive
+        .execute(&cdb, DataDirection::FromDevice, &[], 36)
+        .unwrap_err();
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("READ_DISC_STRUCTURE Format"),
+        "expected format-rejection diagnostic, got: {msg}"
+    );
+}
+
+#[test]
+fn mkb_pack_response_synthetic_round_trip() {
+    // The MKB pack body itself is *not* AACS-LA-bus-encrypted (§4.14.3.4
+    // is explicit about this). MockDrive does not synthesise an MKB
+    // body — exercising the parser against a hand-built wire fixture
+    // is the right level for the Phase B layer.
+    let pack: Vec<u8> = (0..200u8).cycle().take(1024).collect();
+    let total_packs = 3u8;
+    let length: u16 = (2 + pack.len()) as u16;
+    let mut wire = vec![
+        (length >> 8) as u8,
+        (length & 0xFF) as u8,
+        0x00, // reserved
+        total_packs,
+    ];
+    wire.extend_from_slice(&pack);
+    let parsed = parse_mkb_pack_response(&wire).unwrap();
+    assert_eq!(parsed.total_packs, total_packs);
+    assert_eq!(parsed.pack_data.len(), pack.len());
+    assert_eq!(parsed.pack_data, pack);
 }
