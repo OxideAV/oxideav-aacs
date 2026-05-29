@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — AACS LA signature verification on MKB records (§3.2.5.1.2 / §3.2.5.1.3 / §3.2.5.1.8)
+
+Wires the existing `ecdsa::verify` (`AACS_Verify`) primitive into the
+MKB parser so callers that hold the AACS LA public key can check the
+three MKB signatures the spec defines:
+
+- **`Mkb::verify_end_of_block_signature(&self, original_bytes,
+  aacs_la_pub) -> Result<()>`** — verifies the End-of-Media-Key-Block
+  Record signature per Common spec §3.2.5.1.8
+  (`AACS_Verify(AACS_LApub, Signature Data, MKB)`, where `MKB` is the
+  byte range up to but not including the End-of-MKB record).
+- **`Mkb::verify_host_revocation_list(&self, original_bytes,
+  aacs_la_pub) -> Result<()>`** + the parallel
+  **`verify_drive_revocation_list`** — verify the per-signature-block
+  ECDSA signatures inside the HRL / DRL records (Common spec
+  §3.2.5.1.2 / §3.2.5.1.3). Each block's signed-data range is the
+  cumulative prefix "Type-and-Version Record || HRL/DRL record bytes
+  up to the byte immediately preceding this signature", so block N's
+  signature transitively also covers blocks 1..=N−1.
+- **`Mkb::end_of_block_signature: Option<[u8; 40]>`** + the new
+  **`RevocationSignatureBlock { entries_in_block, entries, signature
+  }`** struct surfaced on `Mkb::host_revocation_blocks` /
+  `drive_revocation_blocks` — both expose the raw 40-byte ECDSA
+  signature(s) for callers that want to feed them to an external
+  verifier.
+- **`Mkb::type_and_version_raw: Vec<u8>`** — the on-wire bytes of the
+  mandatory Type-and-Version Record (header included), preserved by
+  the parser because §3.2.5.1.2 requires it as the first portion of
+  the HRL / DRL signed data.
+
+The parser still tolerates revocation blocks whose trailing signature
+field is truncated (per §3.2.5.1.2 final paragraph — "hosts are
+required to store only the data being signed for the first signature
+block, but not required to store the signature itself"); the verifier
+surfaces `AacsError::MkbSignatureMissing` rather than panicking on a
+`None`-signature block.
+
+This crate ships **no AACS LA public key**. AACS LA distributes
+`AACS_LApub` to licensees only, so the verifier takes a `&Point`
+parameter; callers obtain the key out-of-band. A non-licensed
+deployment can still call the verifiers against a self-issued LA
+identity (e.g. for end-to-end MKB-authoring tests).
+
+New error variants:
+
+- `AacsError::MkbSignatureMissing` — the requested signature record
+  was absent or its payload was not the expected 40 bytes.
+- `AacsError::MkbSignatureInvalid` — the signature was present but
+  `AACS_Verify` rejected it under the supplied public key.
+
+Tests:
+
+- 8 new `mkb` unit tests covering: End-of-MKB sign-then-verify
+  roundtrip, wrong-key rejection, prefix-tamper rejection, no-record
+  → MkbSignatureMissing, non-40-byte payload → MkbSignatureMissing,
+  single-block HRL verify roundtrip, DRL wrong-key rejection,
+  no-signature-block-stored truncation tolerance, and a two-block
+  cumulative-prefix HRL chain.
+- 2 new integration tests in `tests/synth_round1_mkb_sig.rs` that
+  build a full Type-and-Version + HRL + Verify-Media-Key +
+  End-of-MKB byte stream through the public API and confirm both
+  verifiers accept the legitimate signatures + reject a tampered
+  buffer.
+
+No docs gap; the spec text for all three signed-data ranges
+(`docs/container/aacs/AACS_Spec_Common_Final_0953.pdf` §3.2.5.1.2
+final paragraph, §3.2.5.1.3 second paragraph, §3.2.5.1.8 second
+paragraph) is unambiguous. Standalone (`--no-default-features`)
+build still passes.
+
 ### Added — `READ_DISC_STRUCTURE` Format `0x81`/`0x82`/`0x83` sub-payloads
 
 Closes the §4.14.3.2 (Pre-recorded Media Serial Number / PMSN),

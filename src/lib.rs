@@ -58,7 +58,9 @@ pub use crate::error::AacsError;
 pub use crate::keydb::{
     DeviceKeyRecord, DiscRecords, DriveCertRecord, HostCertRecord, KeyDb, KeyDbEntry, ProcessingKey,
 };
-pub use crate::mkb::{Mkb, MkbType, RevocationEntry, SubsetDifferenceEntry};
+pub use crate::mkb::{
+    Mkb, MkbType, RevocationEntry, RevocationSignatureBlock, SubsetDifferenceEntry,
+};
 pub use crate::mmc::{
     build_send_key_host_cert_chal, build_send_key_host_key, parse_media_id_response,
     parse_media_serial_response, parse_mkb_pack_response, parse_report_key_agid,

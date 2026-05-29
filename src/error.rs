@@ -88,6 +88,17 @@ pub enum AacsError {
     /// excerpt of the offending line (truncated to 80 chars) plus a
     /// short description.
     HeaderParseError(String),
+    /// An MKB signature record (End-of-MKB `0x02`, Host Revocation
+    /// List `0x21`, or Drive Revocation List `0x20`) was missing the
+    /// 40-byte ECDSA signature payload, or the parsed MKB carried no
+    /// signature blocks for that record at all. `verify_*_signature`
+    /// surfaces this so the caller can distinguish "no signature to
+    /// verify" from "signature present but invalid".
+    MkbSignatureMissing,
+    /// An MKB signature failed `AACS_Verify(AACS_LApub, sig, data)`.
+    /// Returned by `verify_end_of_block_signature` and the per-block
+    /// `verify_{host,drive}_revocation_list` methods.
+    MkbSignatureInvalid,
 }
 
 impl fmt::Display for AacsError {
@@ -137,6 +148,12 @@ impl fmt::Display for AacsError {
             Self::VolumeIdMacInvalid => f.write_str("transferred-ID CMAC mismatch under Bus Key"),
             Self::KeyDbParseError(line) => write!(f, "KEYDB.cfg parse error near: {line:?}"),
             Self::HeaderParseError(msg) => write!(f, "KEYDB.cfg header parse error: {msg}"),
+            Self::MkbSignatureMissing => {
+                f.write_str("MKB signature record absent or carried no signature payload to verify")
+            }
+            Self::MkbSignatureInvalid => f.write_str(
+                "AACS_Verify rejected the MKB signature against the supplied public key",
+            ),
         }
     }
 }

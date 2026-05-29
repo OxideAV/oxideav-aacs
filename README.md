@@ -5,6 +5,34 @@ Content System) decryption layer used by Blu-ray Disc, per the
 publicly-published AACS LA technical specifications **Common Final
 0.953** (Oct 2012) and **BD-Prerecorded Final 0.953** (Oct 2012).
 
+Round 183 wires `AACS_Verify` into the MKB parser so callers that
+hold the AACS LA public key can check the three signatures the
+Common spec defines: the End-of-Media-Key-Block Record signature
+(§3.2.5.1.8) and the per-block ECDSA signatures inside the Host /
+Drive Revocation List Records (§3.2.5.1.2 / §3.2.5.1.3).
+
+- **`Mkb::verify_end_of_block_signature(original_bytes, aacs_la_pub)`**
+  — runs `AACS_Verify(AACS_LApub, Signature, MKB)` against the MKB
+  bytes up to but not including the End-of-MKB record.
+- **`Mkb::verify_host_revocation_list` / `verify_drive_revocation_list`**
+  — verify the per-signature-block ECDSA signatures cumulatively
+  (block N's signed range = Type-and-Version Record || HRL/DRL
+  record bytes up to the byte immediately preceding block N's
+  signature).
+- **`Mkb::end_of_block_signature: Option<[u8; 40]>`** and the new
+  **`host_revocation_blocks` / `drive_revocation_blocks: Vec<RevocationSignatureBlock>`**
+  fields expose the raw 40-byte ECDSA signatures so a caller can
+  also feed them to an external verifier.
+
+The crate ships no AACS LA public key (AACS LA distributes it to
+licensees only); the verifiers take a `&ec::Point` parameter the
+caller supplies. The parser still tolerates revocation blocks whose
+trailing signature field is truncated per §3.2.5.1.2 final paragraph
+("hosts are required to store only the data being signed for the
+first signature block, but not required to store the signature
+itself"); the verifier surfaces `AacsError::MkbSignatureMissing`
+rather than panicking on a `None`-signature block.
+
 Phase D (round 127) wires the Type-4 MKB / Key Conversion Data path
 into the volume pipeline per AACS Common Final 0.953 §3.2.5.1.4 +
 BD-Prerecorded Final 0.953 §3.8:
@@ -147,10 +175,11 @@ real disc content additionally requires that the user have lawfully
 obtained both the disc and the relevant Device Key / VUK material —
 which AACS LA distributes only to licensees.
 
-The implementation is **clean-room**: only the AACS LA PDFs and a
+The implementation is **clean-room**: only the AACS LA PDFs, the
+KEYDB.cfg format reference at `docs/container/aacs/keydb-cfg-format.md`,
+the SCSI MMC working drafts under `docs/container/aacs/mmc/`, and a
 2007-era Doom9 community thread on the Subset-Difference scheme were
-consulted. No code or text from `libaacs`, `aacskeys`, `libbluray`,
-`makemkv`, or related projects was used.
+consulted.
 
 ## Spec source ↔ module map
 
@@ -173,8 +202,11 @@ consulted. No code or text from `libaacs`, `aacskeys`, `libbluray`,
   §4.3 steps 14-23) — the wire-format CDBs that ferry the AKE
   protocol are now staged (Phase B); the ECDSA-secp160r1 sign /
   verify primitives are still pending (Phase C).
-- ECDSA signature verification (`AACS_Verify(AACS_LA_pub, ...)`) —
-  spec defines it but we don't need it to derive `Km`.
+- Real AACS LA public key — AACS LA distributes it only to
+  licensees, so the verifiers (`Mkb::verify_end_of_block_signature`,
+  `verify_host_revocation_list`, `verify_drive_revocation_list`,
+  `Certificate::verify_signature`) take a `&ec::Point` parameter the
+  caller supplies; tests use a self-issued synthetic LA identity.
 - Content Hash Table verification (BD-Prerecorded §2.3) — SHA-1
   integrity check; structurally documented.
 - AACS 2.0 (Ultra HD Blu-ray) — separate spec family, not publicly
