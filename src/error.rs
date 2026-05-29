@@ -99,6 +99,20 @@ pub enum AacsError {
     /// Returned by `verify_end_of_block_signature` and the per-block
     /// `verify_{host,drive}_revocation_list` methods.
     MkbSignatureInvalid,
+    /// A Hash Unit handed to
+    /// [`crate::cht::ContentHashTable::verify_hash_unit`] is not
+    /// exactly [`crate::cht::HASH_UNIT_SIZE`] (96 Logical Sectors =
+    /// 196608) bytes (BD-Prerecorded §2.3.1).
+    BadHashUnitLength(usize),
+    /// A Hash Unit's recomputed `[SHA-1(Hash_Unit)]_lsb_64` did not
+    /// match the Hash Value stored in the Content Hash Table
+    /// (BD-Prerecorded §2.3.2.1). The `index` is the Hash-Value
+    /// position within the table.
+    ContentHashMismatch {
+        /// Index of the mismatching Hash Value within the Content
+        /// Hash Table.
+        index: usize,
+    },
 }
 
 impl fmt::Display for AacsError {
@@ -153,6 +167,14 @@ impl fmt::Display for AacsError {
             }
             Self::MkbSignatureInvalid => f.write_str(
                 "AACS_Verify rejected the MKB signature against the supplied public key",
+            ),
+            Self::BadHashUnitLength(n) => write!(
+                f,
+                "Hash Unit must be exactly 196608 bytes (96 Logical Sectors); got {n} bytes"
+            ),
+            Self::ContentHashMismatch { index } => write!(
+                f,
+                "Content Hash Table hash-unit #{index} failed [SHA-1(Hash_Unit)]_lsb_64 check"
             ),
         }
     }

@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Content Hash Table parsing + Hash-Unit integrity verification (BD-Prerecorded §2.3)
+
+New `cht` module implementing the Content Hash Table (CHT) integrity
+layer per AACS BD-Prerecorded Final 0.953 §2.3 — the per-Hash-Unit
+SHA-1 check a Licensed Player runs over `\BDMV\STREAM` Clip AV data:
+
+- **`cht::ContentHashTable::parse(bytes, number_of_digests,
+  number_of_hash_units) -> Result<ContentHashTable>`** — parses a
+  `ContentHash00N.tbl` per Table 2-2: a header of `Number_of_Digests`
+  12-byte `ClipDescriptor` records (`Starting_HU_Num` / `Clip_Num` /
+  `HU_Offset_in_Clip`, all 32-bit `uimsbf`) followed by
+  `Number_of_HashUnits` 8-byte (`bslbf`) Hash Values. The two counts
+  are NOT stored in the table file — they come from the per-layer
+  Content Certificate (Table 2-1), so the parser takes them as
+  arguments. Trailing `00`-padding is tolerated (authoring/mastering
+  rule).
+- **`cht::ContentHashTable::verify_hash_unit(index, hash_unit_bytes)
+  -> Result<()>`** — recomputes `Hash_Value =
+  [SHA-1(Hash_Unit)]_lsb_64` (§2.3.2.1, least-significant 8 bytes of
+  the 20-byte SHA-1 digest) and compares it to the stored Hash Value.
+  Per §2.3.2.1 the *encrypted* on-disc bytes are hashed, so this
+  verifies integrity without a Title Key.
+- **`cht::hash_value_of_unit(hash_unit) -> [u8; 8]`** — the standalone
+  `[SHA-1(·)]_lsb_64` primitive (e.g. for a CHT author).
+- **`cht::ContentHashTable::{len, is_empty}`** — a zero-byte CHT is
+  valid for a layer with no Clip AV file ≥ 96 Logical Sectors.
+- Size constants: `HASH_UNIT_SIZE` (96 × 2048 = 196608 bytes =
+  exactly 32 Aligned Units, and 7 of them = the spec's 1344 KB
+  minimum), `LOGICAL_SECTOR_SIZE` (2048), `LOGICAL_SECTORS_PER_HASH_UNIT`
+  (96), `HASH_VALUE_SIZE` (8).
+
+New error variants:
+
+- `AacsError::BadHashUnitLength(usize)` — supplied Hash Unit was not
+  exactly 196608 bytes.
+- `AacsError::ContentHashMismatch { index }` — recomputed
+  `[SHA-1(Hash_Unit)]_lsb_64` did not match the stored Hash Value.
+
+Tests: 9 `cht` unit tests (size arithmetic, lsb-64 extraction,
+header/body roundtrip, tamper / wrong-length / out-of-range / short-
+buffer rejection, trailing-padding tolerance, zero-byte table) + 4
+`tests/synth_cht.rs` integration tests (incl. one that builds a Hash
+Unit from 32 freshly-encrypted Aligned Units and verifies the
+encrypted bytes with no Title Key, then detects a single-byte flip).
+All synthetic — no disc-derived material.
+
+No docs gap: §2.3 (Table 2-2 syntax, §2.3.1 Hash-Unit geometry,
+§2.3.2.1 `[SHA-1(Hash_Unit)]_lsb_64`) and the §2 "Logical Sector =
+2048 bytes" definition in `AACS_Spec_BD_Prerecorded_Final_0_953.pdf`
+are unambiguous. Standalone (`--no-default-features`) build still
+passes.
+
 ### Added — AACS LA signature verification on MKB records (§3.2.5.1.2 / §3.2.5.1.3 / §3.2.5.1.8)
 
 Wires the existing `ecdsa::verify` (`AACS_Verify`) primitive into the

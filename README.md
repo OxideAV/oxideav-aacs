@@ -5,6 +5,31 @@ Content System) decryption layer used by Blu-ray Disc, per the
 publicly-published AACS LA technical specifications **Common Final
 0.953** (Oct 2012) and **BD-Prerecorded Final 0.953** (Oct 2012).
 
+Round 188 adds the **Content Hash Table** integrity layer per
+BD-Prerecorded Final 0.953 §2.3 — the per-Hash-Unit SHA-1 check a
+Licensed Player runs to detect tampered Clip AV stream data:
+
+- **`cht::ContentHashTable::parse(bytes, number_of_digests,
+  number_of_hash_units)`** — parses a `ContentHash00N.tbl` (Table
+  2-2): a header of `Number_of_Digests` 12-byte per-Clip descriptors
+  (`Starting_HU_Num` / `Clip_Num` / `HU_Offset_in_Clip`) followed by
+  `Number_of_HashUnits` 8-byte Hash Values. The two counts come from
+  the per-layer Content Certificate (Table 2-1), not the table file
+  itself, so they are passed in.
+- **`cht::ContentHashTable::verify_hash_unit(index, hash_unit_bytes)`**
+  — recomputes `Hash_Value = [SHA-1(Hash_Unit)]_lsb_64` (§2.3.2.1)
+  and compares it to the stored value. A Hash Unit is 96 Logical
+  Sectors = `96 × 2048` = **196608 bytes** (`cht::HASH_UNIT_SIZE`).
+  The hash is taken over the *encrypted* on-disc bytes, so a player
+  verifies integrity **without** holding the Title Key.
+- **`cht::hash_value_of_unit(hash_unit)`** — the standalone
+  `[SHA-1(·)]_lsb_64` primitive for a CHT author.
+
+New error variants `AacsError::BadHashUnitLength` and
+`ContentHashMismatch { index }`. The crate ships no Content
+Certificate signature path yet (that's the AACS-LA-signed Table 2-1
+digest layer) — only the CHT Hash-Unit verification it protects.
+
 Round 183 wires `AACS_Verify` into the MKB parser so callers that
 hold the AACS LA public key can check the three signatures the
 Common spec defines: the End-of-Media-Key-Block Record signature
@@ -186,6 +211,7 @@ consulted.
 | Module                | Spec § (Common)        | Spec § (BD-Prerecorded) |
 |-----------------------|------------------------|-------------------------|
 | `aes`                 | §2.1.1 — §2.1.4        | (constant IV in §3.10)  |
+| `cht`                 | (SHA-1 §2.1.5)         | §2.3                    |
 | `subdiff`             | §3.2.1 — §3.2.4        | —                       |
 | `mkb`                 | §3.2.5                 | §3.1, §3.4              |
 | `unit_key`            | —                      | §3.9.3                  |
@@ -207,8 +233,13 @@ consulted.
   `verify_host_revocation_list`, `verify_drive_revocation_list`,
   `Certificate::verify_signature`) take a `&ec::Point` parameter the
   caller supplies; tests use a self-issued synthetic LA identity.
-- Content Hash Table verification (BD-Prerecorded §2.3) — SHA-1
-  integrity check; structurally documented.
+- Content Certificate (BD-Prerecorded §2.1 / Table 2-1) — the
+  AACS-LA-signed wrapper that carries the per-Clip Content Hash
+  Table Digests. The Content **Hash Table** Hash-Unit integrity
+  check it protects (§2.3, `[SHA-1(Hash_Unit)]_lsb_64`) IS
+  implemented in the `cht` module as of round 188; parsing the
+  signed Table 2-1 certificate + verifying its Signature Data and
+  per-Clip digests is the remaining piece.
 - AACS 2.0 (Ultra HD Blu-ray) — separate spec family, not publicly
   released.
 - BD+ — separate copy-protection layer, not public.
