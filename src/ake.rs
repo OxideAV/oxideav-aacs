@@ -473,6 +473,33 @@ const _: () = {
     assert!(HOST_NONCE_LEN == 20);
 };
 
+/// AACS LA root public key — x-coordinate (20 bytes, big-endian) of
+/// the secp160r1 point `AACS_LApub`. Used by every AACS-compliant
+/// licensee to verify signatures the AACS LA issues over drive /
+/// host certificates and MKB records (§4.1, §3.2.5.1.2/.3/.8). The
+/// value is published as a spec constant in the AACS Common Final
+/// 0.953 document; it is not a per-licensee secret.
+pub const AACS_LA_PUB_X: [u8; 20] = [
+    0x63, 0xC2, 0x1D, 0xFF, 0xB2, 0xB2, 0x79, 0x8A, 0x13, 0xB5, 0x8D, 0x61, 0x16, 0x6C, 0x4E, 0x4A,
+    0xAC, 0x8A, 0x07, 0x72,
+];
+
+/// AACS LA root public key — y-coordinate (20 bytes, big-endian),
+/// companion to [`AACS_LA_PUB_X`].
+pub const AACS_LA_PUB_Y: [u8; 20] = [
+    0x13, 0x7E, 0xC6, 0x38, 0x81, 0x8F, 0xD9, 0x8F, 0xA4, 0xC3, 0x0B, 0x99, 0x67, 0x28, 0xBF, 0x4B,
+    0x91, 0x7F, 0x6A, 0x27,
+];
+
+/// Construct the AACS LA root public key as an on-curve secp160r1
+/// [`Point`]. Panics only if the spec constants drift away from the
+/// curve (which would be a build-time error caught by the test
+/// [`tests::aacs_la_pub_is_on_curve`]).
+pub fn aacs_la_pub_point() -> Point {
+    Point::from_coords(&AACS_LA_PUB_X, &AACS_LA_PUB_Y)
+        .expect("AACS_LA_PUB constants must lie on secp160r1")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -518,6 +545,15 @@ mod tests {
         let bk = bus_key_from_point(&p);
         let x = p.x_u160().to_be_bytes();
         assert_eq!(&bk[..], &x[4..]);
+    }
+
+    #[test]
+    fn aacs_la_pub_is_on_curve() {
+        // The bundled spec constants must construct a valid secp160r1
+        // point. A drift in the bytes would silently break every AKE
+        // handshake — pin it here.
+        assert!(Point::from_coords(&AACS_LA_PUB_X, &AACS_LA_PUB_Y).is_some());
+        let _ = aacs_la_pub_point();
     }
 
     #[test]

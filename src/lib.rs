@@ -48,9 +48,9 @@ pub mod volume;
 pub mod vuk;
 
 pub use crate::ake::{
-    build_signed_certificate, bus_key_from_point, host_authenticate, read_verified_volume_id,
-    AkeResult, Certificate, DriveAuthState, HostCredentials, BUS_KEY_LEN, CERT_TYPE_DRIVE,
-    CERT_TYPE_HOST,
+    aacs_la_pub_point, build_signed_certificate, bus_key_from_point, host_authenticate,
+    read_verified_volume_id, AkeResult, Certificate, DriveAuthState, HostCredentials,
+    AACS_LA_PUB_X, AACS_LA_PUB_Y, BUS_KEY_LEN, CERT_TYPE_DRIVE, CERT_TYPE_HOST,
 };
 pub use crate::cht::{
     hash_value_of_unit, ClipDescriptor, ContentHashTable, HASH_UNIT_SIZE, HASH_VALUE_SIZE,
