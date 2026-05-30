@@ -140,18 +140,28 @@ impl SubsetDifference {
     }
 
     /// Derive `m_v` from `uv` per Common spec §3.2.3 ("the mask for v
-    /// is given by the first lower-order 1-bit in the uv number").
+    /// is given by the first lower-order 1-bit in the uv number.
+    /// **That bit, and all lower-order 0-bits, are zero bits in the
+    /// 'v' mask.**"). The spec's reference C code is:
+    ///
+    /// ```c
+    /// long v_mask = 0xFFFFFFFF;
+    /// while ((uv & ~v_mask) == 0) v_mask <<= 1;
+    /// ```
+    ///
+    /// i.e. the zero region of `m_v` is `trailing_zeros(uv) + 1` bits
+    /// wide — the lowest-order 1-bit AND every 0-bit below it.
     pub fn v_mask(&self) -> u32 {
         if self.uv == 0 {
             // All "don't care" — degenerate but well-defined.
             0
         } else {
-            // Lowest set bit, all bits at-or-above that set in the mask.
-            let low_bit = self.uv & self.uv.wrapping_neg();
-            // The mask "ends" at `low_bit`; bits above are 1, bits
-            // below are 0.
-            let below: u32 = low_bit.wrapping_sub(1);
-            !below
+            let zero_bits = self.uv.trailing_zeros() + 1;
+            if zero_bits >= 32 {
+                0
+            } else {
+                u32::MAX << zero_bits
+            }
         }
     }
 }
@@ -316,18 +326,28 @@ mod tests {
 
     #[test]
     fn v_mask_from_uv() {
-        // uv with low bit at position 4 -> v_mask = 0xFFFFFFF0
+        // Per Common spec §3.2.3, zero bits in m_v include the lowest
+        // 1-bit AND all 0-bits below it. The spec's reference C is
+        //   `while ((uv & ~v_mask) == 0) v_mask <<= 1;`
+        // — for `uv = 0x10` that means trailing_zeros(4) + 1 = 5 zero
+        // bits and `m_v = 0xFFFF_FFE0`.
         let sd = SubsetDifference {
             u_mask_zero_bits: 0,
             uv: 0x0000_0010,
         };
-        assert_eq!(sd.v_mask(), 0xFFFF_FFF0);
-        // uv with low bit at position 0 -> v_mask = 0xFFFFFFFF
+        assert_eq!(sd.v_mask(), 0xFFFF_FFE0);
+        // uv with low bit at position 0 -> 1 zero bit -> m_v = 0xFFFFFFFE
         let sd = SubsetDifference {
             u_mask_zero_bits: 0,
             uv: 0x0000_0001,
         };
-        assert_eq!(sd.v_mask(), 0xFFFF_FFFF);
+        assert_eq!(sd.v_mask(), 0xFFFF_FFFE);
+        // uv = 0 is degenerate (no 1-bit) -> m_v = 0
+        let sd = SubsetDifference {
+            u_mask_zero_bits: 0,
+            uv: 0,
+        };
+        assert_eq!(sd.v_mask(), 0);
     }
 
     #[test]
@@ -337,20 +357,22 @@ mod tests {
         // (when m_u == m_v every applicable device has identical v
         // halves, so the v-check is trivial).
         //
-        // uv = 0x1101_0000 -> low bit at position 16 -> m_v = 0xFFFF_0000.
+        // uv = 0x1101_0000 -> low bit at position 16 -> 17 zero bits
+        // (bit 16 + bits 0..15) -> m_v = 0xFFFE_0000.
         // u_mask_zero_bits = 24 -> m_u = 0xFF00_0000.
         let sd = SubsetDifference {
             u_mask_zero_bits: 24,
             uv: 0x1101_0000,
         };
         assert_eq!(sd.u_mask(), 0xFF00_0000);
-        assert_eq!(sd.v_mask(), 0xFFFF_0000);
+        assert_eq!(sd.v_mask(), 0xFFFE_0000);
 
         // Device 0x1102_0000: D&m_u = 0x1100_0000 = uv&m_u (OK);
-        //                     D&m_v = 0x1102_0000, uv&m_v = 0x1101_0000;
+        //                     D&m_v = 0x1102_0000 & 0xFFFE_0000 = 0x1102_0000,
+        //                     uv&m_v = 0x1101_0000 & 0xFFFE_0000 = 0x1100_0000;
         //                     -> applies = true.
         assert!(applies_to_device(&sd, 0x1102_0000));
-        // Device 0x1101_FFFF: D&m_v = 0x1101_0000 == uv&m_v -> false.
+        // Device 0x1101_FFFF: D&m_v = 0x1100_0000 == uv&m_v -> false.
         assert!(!applies_to_device(&sd, 0x1101_FFFF));
         // Device 0x2200_0000: D&m_u = 0x2200_0000 != uv&m_u -> false.
         assert!(!applies_to_device(&sd, 0x2200_0000));

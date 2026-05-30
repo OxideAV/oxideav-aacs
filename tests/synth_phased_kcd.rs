@@ -123,6 +123,7 @@ fn synth_inputs() -> ([u8; 16], [u8; 16], DeviceKey, [u8; 16]) {
         uv: SYNTH_DEVICE_UV,
         u_mask_zero_bits: SYNTH_SD_U_MASK_ZEROS,
         v_mask_zero_bits: SYNTH_DEVICE_V_ZEROS,
+        device_node: None,
     };
     (precursor, enc_km, device, device_key)
 }

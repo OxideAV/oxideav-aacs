@@ -56,6 +56,15 @@ pub struct DeviceKey {
     pub u_mask_zero_bits: u8,
     /// Trailing zero bits in `m_v`.
     pub v_mask_zero_bits: u8,
+    /// Device-node number (`D_node`) — the leaf position of the
+    /// *device* this key belongs to. Per Common spec §3.2.3,
+    /// `D_node = (device_number << 1) | 1`. Some KEYDB.cfg `| DK |`
+    /// records store this explicitly (the `DEVICE_NODE` field), which
+    /// does NOT match `(uv << 1) | 1` because a single device holds
+    /// keys at many tree positions and the keys' `uv` numbers identify
+    /// *the key's* node in the master tree, not the device's leaf.
+    /// `None` means "synthesize from `uv`" (legacy callers).
+    pub device_node: Option<u32>,
 }
 
 /// A 128-bit unwrapped CPS Unit Title Key.
@@ -226,9 +235,14 @@ impl AacsVolume {
             applies_to_device, derive_processing_key, media_key_from_processing_key,
             SubsetDifference,
         };
-        // §3.2.3: device node numbers are device numbers shifted left
-        // by 1, with the low-order bit set.
-        let d_node = (device_key.uv << 1) | 1;
+        // §3.2.3 distinguishes between *device numbers* (the leaf
+        // identifier of the device) and *the key's* `uv` (which
+        // identifies the key's position in the tree — often an
+        // ancestor of the device's leaf). KEYDB.cfg's `| DK |`
+        // records carry the leaf `D_node` explicitly; we prefer it
+        // when available and fall back to the legacy `(uv << 1) | 1`
+        // construction when not.
+        let d_node = device_key.device_node.unwrap_or((device_key.uv << 1) | 1);
         let mut chosen: Option<(usize, SubsetDifference)> = None;
         for (i, e) in self.mkb.explicit_subdiff.iter().enumerate() {
             let sd = SubsetDifference {
@@ -241,7 +255,14 @@ impl AacsVolume {
             }
         }
         let (idx, sd) = chosen.ok_or(AacsError::DeviceRevoked)?;
-        let target_v_mask_zero_bits = sd.uv.trailing_zeros() as u8;
+        // Spec §3.2.3: zero bits in m_v include the lowest 1-bit AND
+        // all 0-bits below it. `trailing_zeros()` alone counts only
+        // the 0-bits below — add 1 to include the lowest 1-bit.
+        let target_v_mask_zero_bits = if sd.uv == 0 {
+            32
+        } else {
+            (sd.uv.trailing_zeros() + 1).min(32) as u8
+        };
         let pk = derive_processing_key(
             &device_key.key,
             device_key.uv,
