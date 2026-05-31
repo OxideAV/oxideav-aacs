@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — structured `ParseReport` for KEYDB.cfg + fuzz/robustness suite
+
+The `KEYDB.cfg` parser already skipped malformed lines individually
+rather than aborting the whole load, but the only way to find out
+*what* was skipped was the `OXIDEAV_AACS_DEBUG=1` stderr toggle. Round
+200 surfaces that information programmatically:
+
+- **`KeyDb::parse_with_report(&str) -> Result<(KeyDb, ParseReport)>`**
+  — same tolerant per-line semantics as `KeyDb::parse`; in addition,
+  every non-empty / non-comment line the parser couldn't interpret is
+  captured in a `ParseReport`. The report exposes:
+  - `skipped: Vec<SkippedLine>` — 1-based `line_number`, 80-byte
+    UTF-8-safe `snippet` of the offending line, and the
+    `Display`-formatted `AacsError` `reason` returned by the per-line
+    parser.
+  - `is_clean()` / `skipped_count()` accessors.
+- **`KeyDb::load_from_with_report(path)`** — same shape, reading from
+  a filesystem path. Useful for diagnostic tooling that wants to show
+  a "loaded N records, skipped M lines for the following reasons"
+  summary instead of silently dropping records.
+- **`KeyDb::parse(text)`** is unchanged behaviourally — it's now a
+  thin discard of the report and continues to honour
+  `OXIDEAV_AACS_DEBUG=1` for stderr mirroring.
+- A new `truncate_excerpt` helper consolidates the UTF-8-boundary-safe
+  snippet logic shared by `KeyDbParseError` / `HeaderParseError` so
+  multi-byte codepoints can never be split by the 80-byte cap.
+
+New public types `oxideav_aacs::{ParseReport, SkippedLine}`. No
+behavioural change to any other crate API.
+
+A companion integration test suite,
+`tests/synth_round200_keydb_fuzz.rs` (27 cases, all synthetic),
+provides "fuzz-equivalent" coverage by enumerating every structurally
+distinct failure mode the parser exposes:
+
+- Per-record-type malformations: short / long / odd-length /
+  non-`0x`-prefixed hex literals, each required field missing, each
+  named field at the wrong byte count, declared-vs-actual length
+  mismatches for `HC` certificates.
+- Scope rules: `VID` / `VUK` / `MEK` / `TK` / `KCD` rows outside any
+  `DISCID` scope are rejected; a malformed `DISCID` invalidates the
+  subsequent scoped rows.
+- Lexical robustness: mixed CRLF / LF / lone-CR line endings, the
+  printable-ASCII byte range as the first character of a line,
+  multi-byte UTF-8 in record bodies (snippet truncation must not
+  split codepoints), and a 10 KiB malformed line (the snippet must
+  stay under 80 bytes).
+- Composite: `ParseReport.skipped` line numbers come back in source
+  order; comment-only / whitespace-only lines never appear in the
+  report; a file of 26 unknown leaders all skip without aborting.
+
+The suite pins three invariants: the parser never panics, never aborts
+the whole load because of one bad line, and every skip is surfaced
+through `ParseReport` exactly once.
+
 ## [0.1.2](https://github.com/OxideAV/oxideav-aacs/compare/v0.1.1...v0.1.2) - 2026-05-29
 
 ### Other

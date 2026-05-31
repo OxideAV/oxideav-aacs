@@ -5,6 +5,35 @@ Content System) decryption layer used by Blu-ray Disc, per the
 publicly-published AACS LA technical specifications **Common Final
 0.953** (Oct 2012) and **BD-Prerecorded Final 0.953** (Oct 2012).
 
+Round 200 adds a **structured parse report** to the `KEYDB.cfg` parser
+so callers can surface every skipped line — line number, excerpt,
+parse-error reason — instead of relying on `OXIDEAV_AACS_DEBUG=1`
+stderr output:
+
+- **`KeyDb::parse_with_report(text) -> Result<(KeyDb, ParseReport)>`**
+  — same tolerant per-line behaviour as `KeyDb::parse`, but every
+  non-empty / non-comment line that fails to parse is captured in a
+  `ParseReport { skipped: Vec<SkippedLine> }`. Each `SkippedLine`
+  carries a 1-based `line_number`, an 80-byte UTF-8-safe `snippet` of
+  the offending line, and the `Display`-formatted `AacsError` the
+  per-line parser returned (`reason`).
+- **`KeyDb::load_from_with_report(path)`** — same shape, reading from a
+  filesystem path.
+- **`ParseReport::is_clean()`** / **`ParseReport::skipped_count()`** —
+  convenience accessors for the common "did the file load cleanly?"
+  check.
+- **`KeyDb::parse(text)`** is unchanged; it's now a thin discard of the
+  report so existing callers see no behaviour change.
+
+Companion test suite `tests/synth_round200_keydb_fuzz.rs` (27 cases)
+enumerates every record type's plausible malformations — truncated /
+oversized / odd-length / non-`0x`-prefixed hex, missing required
+fields, unknown leaders, out-of-`DISCID`-scope rows, mixed CRLF / LF
+line endings, multi-byte UTF-8 in record bodies, very long bad lines,
+a printable-ASCII byte sweep over leader characters — and pins the
+"never panic / never fail-whole-load / every skip surfaced in
+`ParseReport`" invariants.
+
 Round 188 adds the **Content Hash Table** integrity layer per
 BD-Prerecorded Final 0.953 §2.3 — the per-Hash-Unit SHA-1 check a
 Licensed Player runs to detect tampered Clip AV stream data:

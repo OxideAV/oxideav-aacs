@@ -61,7 +61,8 @@ pub use crate::ec::{Fp, Point, U160};
 pub use crate::ecdsa::{sign, sign_with_k, verify, Signature};
 pub use crate::error::AacsError;
 pub use crate::keydb::{
-    DeviceKeyRecord, DiscRecords, DriveCertRecord, HostCertRecord, KeyDb, KeyDbEntry, ProcessingKey,
+    DeviceKeyRecord, DiscRecords, DriveCertRecord, HostCertRecord, KeyDb, KeyDbEntry, ParseReport,
+    ProcessingKey, SkippedLine,
 };
 pub use crate::mkb::{
     Mkb, MkbType, RevocationEntry, RevocationSignatureBlock, SubsetDifferenceEntry,

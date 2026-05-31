@@ -170,6 +170,52 @@ pub struct KeyDb {
     disc_records: BTreeMap<[u8; 20], DiscRecords>,
 }
 
+/// One non-empty, non-comment line that the parser couldn't make sense
+/// of.
+///
+/// Produced by [`KeyDb::parse_with_report`] alongside the parsed
+/// database so callers can surface a useful diagnostic — e.g. a Blu-ray
+/// ripping tool can list which `KEYDB.cfg` entries were rejected and
+/// why, instead of silently ignoring them on stderr.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkippedLine {
+    /// 1-based line number in the original input.
+    pub line_number: usize,
+    /// Best-effort excerpt of the offending line (already truncated to
+    /// at most 80 characters by the per-line parser).
+    pub snippet: String,
+    /// `Display`-formatted parse error returned for that line.
+    pub reason: String,
+}
+
+/// Outcome of a tolerant KEYDB.cfg parse.
+///
+/// Tracks every line we couldn't interpret as either a legacy
+/// `<DISC_ID>=V<VUK>` entry or a `|`-leader record. Empty when the
+/// whole file parsed cleanly. Each entry pairs a 1-based line number
+/// with a short excerpt and the `Display`-formatted [`AacsError`] the
+/// per-line parser returned, so a caller can present a useful "we
+/// loaded N records but skipped M lines for the following reasons"
+/// summary without having to re-run the parser.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ParseReport {
+    /// Lines the parser couldn't interpret, in source order.
+    pub skipped: Vec<SkippedLine>,
+}
+
+impl ParseReport {
+    /// `true` if every non-empty, non-comment line in the input parsed
+    /// cleanly.
+    pub fn is_clean(&self) -> bool {
+        self.skipped.is_empty()
+    }
+
+    /// Number of lines the parser couldn't interpret.
+    pub fn skipped_count(&self) -> usize {
+        self.skipped.len()
+    }
+}
+
 impl KeyDb {
     /// Parse a KEYDB.cfg byte stream from a `&str`.
     ///
@@ -185,15 +231,39 @@ impl KeyDb {
     ///
     /// Lines we can't parse are skipped rather than failing the whole
     /// load. Set `OXIDEAV_AACS_DEBUG=1` to surface each skip on
-    /// stderr.
+    /// stderr. Callers that want a structured list of every skipped
+    /// line (line number, excerpt, parse error message) should use
+    /// [`KeyDb::parse_with_report`] instead.
     pub fn parse(text: &str) -> Result<Self, AacsError> {
+        let (db, _report) = Self::parse_with_report(text)?;
+        Ok(db)
+    }
+
+    /// Parse a KEYDB.cfg byte stream and return both the populated
+    /// database and a [`ParseReport`] describing every non-empty,
+    /// non-comment line that the parser couldn't interpret.
+    ///
+    /// Same tolerance as [`KeyDb::parse`] (no line ever fails the
+    /// whole load), but every skipped line is captured in the
+    /// returned report so callers can surface a "loaded N records,
+    /// skipped M lines" diagnostic to the user. The report's
+    /// `skipped` vector preserves the order in which lines appeared
+    /// in the input.
+    ///
+    /// The `OXIDEAV_AACS_DEBUG=1` environment toggle still mirrors
+    /// each skip to stderr — the report makes the same information
+    /// available programmatically.
+    pub fn parse_with_report(text: &str) -> Result<(Self, ParseReport), AacsError> {
         let debug = std::env::var_os("OXIDEAV_AACS_DEBUG").is_some();
         let mut out = Self::default();
-        let mut skipped = 0usize;
+        let mut report = ParseReport::default();
         // `| DISCID |` sets the current disc-scope; subsequent VID /
         // VUK / MEK / TK / KCD rows are attributed to it.
         let mut current_discid: Option<[u8; 20]> = None;
-        for raw in text.lines() {
+        // 1-based line numbering for human-friendly diagnostics — lines
+        // file editors / IDE jumps interpret the same way.
+        for (line_idx, raw) in text.lines().enumerate() {
+            let line_number = line_idx + 1;
             // Split body / trailing-comment on the first `;`.
             let (body, comment) = match raw.find(';') {
                 Some(i) => (&raw[..i], Some(raw[i + 1..].trim().to_string())),
@@ -218,10 +288,14 @@ impl KeyDb {
                 })
             };
             if let Err(e) = res {
-                skipped += 1;
                 if debug {
-                    eprintln!("oxideav-aacs: KEYDB.cfg skipped line — {e}");
+                    eprintln!("oxideav-aacs: KEYDB.cfg line {line_number} skipped — {e}");
                 }
+                report.skipped.push(SkippedLine {
+                    line_number,
+                    snippet: truncate_excerpt(body, 80),
+                    reason: e.to_string(),
+                });
             }
         }
         if debug {
@@ -233,16 +307,26 @@ impl KeyDb {
                 out.host_certs.len(),
                 out.drive_certs.len(),
                 out.disc_records.len(),
-                skipped
+                report.skipped.len()
             );
         }
-        Ok(out)
+        Ok((out, report))
     }
 
     /// Load KEYDB.cfg from a filesystem path.
     pub fn load_from(path: impl AsRef<Path>) -> Result<Self, AacsError> {
         let text = std::fs::read_to_string(path.as_ref())?;
         Self::parse(&text)
+    }
+
+    /// Load a KEYDB.cfg from a filesystem path, returning both the
+    /// parsed database and the [`ParseReport`] describing every line
+    /// that was skipped. Same I/O semantics as [`KeyDb::load_from`];
+    /// useful for diagnostics tooling that needs to surface why
+    /// particular entries were dropped.
+    pub fn load_from_with_report(path: impl AsRef<Path>) -> Result<(Self, ParseReport), AacsError> {
+        let text = std::fs::read_to_string(path.as_ref())?;
+        Self::parse_with_report(&text)
     }
 
     /// Load KEYDB.cfg from the default per-platform search path.
@@ -985,25 +1069,28 @@ fn parse_hex_array_16_legacy(text: &str) -> Result<[u8; 16], AacsError> {
 }
 
 fn make_legacy_err(snippet: &str) -> AacsError {
-    let limit = snippet.len().min(80);
+    AacsError::KeyDbParseError(truncate_excerpt(snippet, 80))
+}
+
+/// Truncate a snippet to at most `max_bytes` bytes without splitting a
+/// UTF-8 codepoint. Used wherever the parser surfaces a best-effort
+/// excerpt of the offending line in a diagnostic.
+fn truncate_excerpt(snippet: &str, max_bytes: usize) -> String {
+    if snippet.len() <= max_bytes {
+        return snippet.to_string();
+    }
     let cut = snippet
         .char_indices()
-        .take_while(|(i, _)| *i < limit)
+        .take_while(|(i, c)| i + c.len_utf8() <= max_bytes)
         .last()
         .map(|(i, c)| i + c.len_utf8())
         .unwrap_or(0);
-    AacsError::KeyDbParseError(snippet[..cut].to_string())
+    snippet[..cut].to_string()
 }
 
 fn header_err(snippet: &str, msg: &str) -> AacsError {
-    let limit = snippet.len().min(80);
-    let cut = snippet
-        .char_indices()
-        .take_while(|(i, _)| *i < limit)
-        .last()
-        .map(|(i, c)| i + c.len_utf8())
-        .unwrap_or(0);
-    AacsError::HeaderParseError(format!("{msg} (near {:?})", &snippet[..cut]))
+    let excerpt = truncate_excerpt(snippet, 80);
+    AacsError::HeaderParseError(format!("{msg} (near {excerpt:?})"))
 }
 
 #[cfg(test)]
