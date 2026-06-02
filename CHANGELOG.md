@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 211 AKE/EC runtime self-check entry points
+
+New module `self_check` exposes runtime-callable self-check entry points
+for the AACS 160-bit curve (Common Final 0.953 §2.3 Table 2-1) + the
+§4.3 Drive-Host AKE state machine. A downstream consumer (e.g.
+`oxideav-bluray`) can now validate the in-tree cryptographic primitives
+before issuing a real SCSI command to a Licensed Drive, without itself
+needing AACS LA key material or a real disc.
+
+Four checks, callable independently or as a single cascade:
+
+- **`curve_self_check()`** — Table 2-1 identity round-trip: generator
+  `G` is on the curve, `n·G == O`, `G.double() == G + G`,
+  `(a + b)·G == a·G + b·G` for two independent scalars, scalar
+  `a · a⁻¹ ≡ 1 (mod n)`, and the affine→bytes→affine round-trip is
+  identity.
+- **`aacs_la_pub_self_check()`** — the bundled `AACS_LA_PUB_X` /
+  `AACS_LA_PUB_Y` coordinates form a valid on-curve secp160r1 point, and
+  the `aacs_la_pub_point()` helper agrees.
+- **`ake_ecdh_self_check()`** — synthetic ECDH: `Dv = dk·G`, `Hv = hk·G`,
+  then `lsb_128(x(hk·Dv)) == lsb_128(x(dk·Hv))` per §4.3 step 28/29; the
+  agreed Bus Key is also checked non-degenerate (not all-zero).
+- **`ake_full_self_check()`** — full §4.3 AKE end-to-end against a
+  synthetic-LA-rooted in-process `MockDrive`: mints a synthetic AACS LA
+  root, signs synthetic Drive + Host certificates, runs
+  `host_authenticate` through an authenticating `DriveAuthState`, and
+  asserts both sides derive the same 128-bit Bus Key. Exercises every
+  Phase B + Phase C path in a single call.
+- **`all_self_checks()`** — convenience wrapper running all four in
+  sequence and short-circuiting on the first failure.
+
+Failures surface as a new `AacsError::SelfCheckFailed { what:
+&'static str }` variant carrying a tag for the failing identity (e.g.
+`"n·G != point at infinity"`, `"ECDH bus keys disagree"`, `"host and
+drive Bus Keys disagree after full §4.3 AKE"`).
+
+Companion integration test `tests/synth_round211_self_check.rs` (6
+cases) pins the per-function pass on a clean build and asserts the
+cascade is idempotent across repeated invocations (no hidden RNG, no
+stashed state). All values are synthesised in-source from constants — no
+real AACS LA key material, no disc fixtures.
+
 ### Added — structured `ParseReport` for KEYDB.cfg + fuzz/robustness suite
 
 The `KEYDB.cfg` parser already skipped malformed lines individually

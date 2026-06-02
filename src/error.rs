@@ -113,6 +113,16 @@ pub enum AacsError {
         /// Hash Table.
         index: usize,
     },
+    /// A runtime self-check entry point in [`crate::self_check`] failed.
+    /// The `what` tag pinpoints which leg of the §2.3 curve / §4.3 AKE
+    /// round-trip mismatched. Surfaces only when a consumer explicitly
+    /// invokes `curve_self_check` / `aacs_la_pub_self_check` /
+    /// `ake_ecdh_self_check` / `ake_full_self_check` / `all_self_checks`.
+    SelfCheckFailed {
+        /// Short identifier of the failing identity (e.g.
+        /// `"n·G != point at infinity"`, `"ECDH bus keys disagree"`).
+        what: &'static str,
+    },
 }
 
 impl fmt::Display for AacsError {
@@ -176,6 +186,9 @@ impl fmt::Display for AacsError {
                 f,
                 "Content Hash Table hash-unit #{index} failed [SHA-1(Hash_Unit)]_lsb_64 check"
             ),
+            Self::SelfCheckFailed { what } => {
+                write!(f, "AACS self-check failed: {what}")
+            }
         }
     }
 }

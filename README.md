@@ -5,6 +5,38 @@ Content System) decryption layer used by Blu-ray Disc, per the
 publicly-published AACS LA technical specifications **Common Final
 0.953** (Oct 2012) and **BD-Prerecorded Final 0.953** (Oct 2012).
 
+Round 211 adds **runtime AKE/EC self-check entry points** so a downstream
+consumer (e.g. `oxideav-bluray`) can validate the in-tree §2.3 curve
+constants + §4.3 AKE state machine before issuing a real SCSI command —
+without itself needing a real Licensed Drive or AACS LA key material.
+Module [`self_check`] exposes four independently callable checks that
+cascade from cheap to expensive:
+
+- **`curve_self_check()`** — Table 2-1 identity round-trip: `G` on curve,
+  `n·G == O`, `G.double() == G + G`, `(a + b)·G == a·G + b·G`, scalar
+  `a · a⁻¹ ≡ 1 (mod n)`, and `Point::from_coords(G.x, G.y) == G`.
+- **`aacs_la_pub_self_check()`** — the bundled
+  [`AACS_LA_PUB_X`] / [`AACS_LA_PUB_Y`] coordinates form a valid on-curve
+  secp160r1 point, and the [`aacs_la_pub_point()`] helper agrees.
+- **`ake_ecdh_self_check()`** — synthetic ECDH: `Dv = dk·G`, `Hv = hk·G`,
+  then `lsb_128(x(hk·Dv)) == lsb_128(x(dk·Hv))` (§4.3 step 28 / 29 Bus
+  Key derivation), with the agreed key checked non-degenerate.
+- **`ake_full_self_check()`** — full §4.3 AKE end-to-end against a
+  synthetic-LA-rooted in-process [`MockDrive`]: mints a synthetic AACS LA
+  root, signs synthetic Drive + Host certificates, runs
+  [`host_authenticate`] through the authenticating [`DriveAuthState`],
+  and asserts both sides derive the same 128-bit Bus Key. This exercises
+  every Phase B + Phase C path in a single call (CDB build/parse → ECDSA
+  sign/verify → certificate parse → Bus Key derivation).
+- **`all_self_checks()`** — convenience wrapper that runs all four
+  in order and stops at the first failure.
+
+Failures surface as `AacsError::SelfCheckFailed { what }` with a tag
+naming the failing identity (e.g. `"n·G != point at infinity"`,
+`"ECDH bus keys disagree"`, `"host and drive Bus Keys disagree after
+full §4.3 AKE"`). Every check is deterministic, runs in ms, and uses no
+real AACS LA key material.
+
 Round 200 adds a **structured parse report** to the `KEYDB.cfg` parser
 so callers can surface every skipped line — line number, excerpt,
 parse-error reason — instead of relying on `OXIDEAV_AACS_DEBUG=1`
@@ -248,6 +280,7 @@ consulted.
 | `content`             | —                      | §3.10                   |
 | `volume`              | —                      | §3.1, §3.9, Figure 3-5  |
 | `keydb`               | (de-facto community)   | —                       |
+| `self_check`          | §2.3, §4.3             | —                       |
 
 ## Out of scope
 

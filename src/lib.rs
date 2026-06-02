@@ -42,6 +42,7 @@ pub mod error;
 pub mod keydb;
 pub mod mkb;
 pub mod mmc;
+pub mod self_check;
 pub mod subdiff;
 pub mod unit_key;
 pub mod volume;
@@ -75,6 +76,10 @@ pub use crate::mmc::{
     DataDirection, DriveCertChallengeResponse, DriveCertResponse, DriveCommand, DriveKeyResponse,
     MediaIdentifierResponse, MediaSerialNumberResponse, MkbPackResponse, MockDrive,
     ReadDiscStructure, ReportKey, ScsiResponse, SendKey, VolumeIdResponse,
+};
+pub use crate::self_check::{
+    aacs_la_pub_self_check, ake_ecdh_self_check, ake_full_self_check, all_self_checks,
+    curve_self_check,
 };
 pub use crate::subdiff::{
     aes_g3, applies_to_device, apply_key_conversion_data, derive_processing_key, SubsetDifference,
