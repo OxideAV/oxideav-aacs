@@ -7,6 +7,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 222 signed Content Certificate parse + verify
+  (PVB §2.4 / §2.5 / §2.6, BD-Prerecorded Table 2-1)
+
+New module `content_certificate` implements the AACS-LA-signed Table
+2-1 wrapper that binds a BD-ROM physical layer's revocation parameters,
+BDMV usage-rules hashes, and per-Content-Hash-Table digests into one
+ECDSA-signed blob — the Pre-recorded Video Book §2.6 verification the
+Content Hash Table integrity check (already implemented in round 188)
+depends on.
+
+- **`ContentCertificate::parse(bytes)`** — decodes one
+  `Content00N.cer` file into the generic PVB Table 2-1 header
+  (Certificate Type, BEE flag, `Total_Number_of_HashUnits`,
+  `Total_Number_of_Layers`, `Layer_Number`, `Number_of_HashUnits`,
+  `Number_of_Digests`, `Applicant ID`, `Content Sequence Number`,
+  `Minimum CRL Version`), the variable-length `Format_Specific_Section`
+  (with the `Length_Format_Specific_Section` 4-byte-alignment rule
+  enforced and `L = 0` accepted as the spec's alignment-pad case), the
+  `Number_of_Digests` 8-byte `Content Hash Table Digest`s, and the
+  trailing 40-byte `Signature Data` field.
+- **`ContentCertificate::verify_signature(aacs_cc_pub)`** —
+  `AACS_Verify(AACS_CC_pub, Signature_Data, CC)` over the certificate
+  bytes up to but excluding the trailing 40-byte signature (PVB §2.5
+  step 4 / §2.6 step 5). The caller supplies the AACS LA Content
+  Certificate public key; AACS LA distributes it only to licensees so
+  the crate ships no key material.
+- **`ContentCertificate::content_hash_table_digest(cht_bytes)`** +
+  **`verify_content_hash_table_digest(digest_index, cht_bytes)`** —
+  recompute `CHT_d = [SHA-1(CHT)]_lsb_64` (PVB §2.5 step 3 / §2.6
+  step 3) over the raw on-disc Content Hash Table bytes and match
+  against the per-layer digest stored in the certificate.
+- **`ContentCertificate::content_certificate_id()`** — returns the
+  6-byte Content Certificate ID = `Applicant_ID || Content Sequence
+  Number` per PVB §2.4; this is the lookup key for PVB Table 2-3
+  Revocation Records.
+- **`ContentCertificate::bd_format_specific_section()`** /
+  **`BdFormatSpecificSection::parse(bytes)`** — decode the
+  BD-Prerecorded Final 0.953 Table 2-1 Format-Specific Section
+  (`Hash_Value_of_MC_Manifest_File`(20) + `Hash_Value_of_BDJ_Root_Cert`
+  (20) + `Num_of_CPS_Unit`(2) + `J × Hash_Value_of_CPS_Unit_Usage_File`
+  (20·J)) out of the generic variable-length region.
+- **`ContentSequenceNumber`** — structured 6-bit CCSS ID / 15-bit
+  Timestamp / 11-bit Sequence Number (= `Sequence Number 1(4) ||
+  Sequence Number 2(7)`) decoder + re-encoder for the bit layout in
+  BD-Prerecorded Table 2-1 bytes 16..=19.
+- **`usage_rules_hash(bytes)`** — exposes the `C_ur =
+  SHA-1(Usage_Rules)` primitive from PVB §2.6 so the caller can apply
+  it to whichever usage-rules artefact the adaptation book specifies
+  (the BD spec uses the MC Manifest File and the per-CPS-Unit Usage
+  Files).
+
+Reused error variants only: `AacsError::Truncated` /
+`AacsError::OversizedRecord` (mirror the existing parser surface),
+`AacsError::InvalidValue` (unknown Certificate Type or violated length
+alignment), `AacsError::MkbSignatureInvalid` (signature `AACS_Verify`
+rejected; reused so consumers can fold all `AACS_Verify` failures
+through one branch), and `AacsError::ContentHashMismatch` (recomputed
+`CHT_d` did not match a stored digest).
+
+Companion integration test `tests/synth_round222_content_certificate.rs`
+(6 cases) mints a synthetic AACS_CC ECDSA key pair, builds a
+fully-populated layer-0 certificate over two synthetic Content Hash
+Tables, and asserts that: the canonical `to_bytes` form round-trips
+through `parse` byte-exact; the `verify_signature` check passes against
+the synthetic public key; tampering one stored CHT digest breaks
+`verify_signature`; tampering the on-disc CHT bytes breaks the
+per-digest match; a wrong public key rejects the signature; `CHT_d` is
+exactly 8 bytes; and `usage_rules_hash` is plain SHA-1 and
+deterministic.
+
+Lib-side test module (16 cases) covers
+`ContentSequenceNumber::{from,to}_be_bytes` round-tripping across
+boundary values, BD Format-Specific Section parse / round-trip /
+truncated-prefix / short-trailer rejection, full-certificate round-trip,
+unknown-`Certificate Type` rejection, the `(L + 2) ≡ 0 (mod 4)` length
+alignment rule, signature-payload range, and the `L = 0` alignment-pad
+path.
+
 ### Added — Round 211 AKE/EC runtime self-check entry points
 
 New module `self_check` exposes runtime-callable self-check entry points

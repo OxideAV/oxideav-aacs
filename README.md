@@ -5,6 +5,54 @@ Content System) decryption layer used by Blu-ray Disc, per the
 publicly-published AACS LA technical specifications **Common Final
 0.953** (Oct 2012) and **BD-Prerecorded Final 0.953** (Oct 2012).
 
+Round 222 adds the **signed Content Certificate** parse/verify path per
+Pre-recorded Video Book §2.4 / §2.5 / §2.6, with the BD-Prerecorded
+Final 0.953 Table 2-1 Format-Specific Section decoded out. Module
+[`content_certificate`] now exposes:
+
+- **`ContentCertificate::parse(bytes)`** — parses one `Content00N.cer`
+  blob into its header (Certificate Type, BEE flag,
+  `Total_Number_of_HashUnits`, `Total_Number_of_Layers`,
+  `Layer_Number`, `Number_of_HashUnits`, `Number_of_Digests`,
+  `Applicant ID`, `Content Sequence Number`, `Minimum CRL Version`),
+  the variable-length `Format_Specific_Section`, the
+  `Number_of_Digests` 8-byte `Content Hash Table Digest`s, and the
+  40-byte `Signature Data`. The `Length_Format_Specific_Section`
+  4-byte-alignment rule (PVB §2.4) is enforced; the `L = 0`
+  alignment-pad case is accepted.
+- **`ContentCertificate::verify_signature(aacs_cc_pub)`** —
+  `AACS_Verify(AACS_CC_pub, Signature_Data, CC)` over the certificate
+  bytes up to but excluding the trailing 40-byte signature
+  (PVB §2.5 step 4 / §2.6 step 5).
+- **`ContentCertificate::content_hash_table_digest(cht_bytes)`** /
+  **`verify_content_hash_table_digest(digest_index, cht_bytes)`** —
+  recomputes `CHT_d = [SHA-1(CHT)]_lsb_64` (PVB §2.5 step 3 / §2.6
+  step 3) and matches it against the per-layer digest stored in the
+  certificate.
+- **`ContentCertificate::content_certificate_id()`** — returns the
+  6-byte Content Certificate ID = `Applicant_ID || Content Sequence
+  Number` per PVB §2.4; the lookup key for PVB Table 2-3 Revocation
+  Records.
+- **`ContentSequenceNumber`** — structured decoder for the 32-bit
+  Content Sequence Number bit layout from BD-Prerecorded Table 2-1
+  (6-bit CCSS ID, 15-bit Timestamp, 11-bit Sequence Number from
+  `Sequence Number 1(4) || Sequence Number 2(7)`), with a re-encoder
+  for round-trip authoring.
+- **`BdFormatSpecificSection::parse(bytes)`** — decodes the
+  BD-Prerecorded Table 2-1 Format-Specific Section into
+  `Hash_Value_of_MC_Manifest_File`, `Hash_Value_of_BDJ_Root_Cert`,
+  `Num_of_CPS_Unit`, and the `J × Hash_Value_of_CPS_Unit_Usage_File`
+  20-byte SHA-1 array.
+- **`usage_rules_hash(bytes)`** — the `C_ur = SHA-1(Usage_Rules)`
+  primitive from PVB §2.6, exposed so the caller can apply it to
+  whichever usage-rules artefact the adaptation book dictates.
+
+No real AACS LA Content Certificate public key (AACS LA distributes it
+only to licensees) — `verify_signature` takes a caller-supplied
+`&ec::Point`. The CRL Table 2-2..2-5 layer is still out of scope; this
+round only delivers the signed Table 2-1 wrapper around the
+already-implemented (round 188) Content Hash Table integrity layer.
+
 Round 211 adds **runtime AKE/EC self-check entry points** so a downstream
 consumer (e.g. `oxideav-bluray`) can validate the in-tree §2.3 curve
 constants + §4.3 AKE state machine before issuing a real SCSI command —
@@ -273,6 +321,7 @@ consulted.
 |-----------------------|------------------------|-------------------------|
 | `aes`                 | §2.1.1 — §2.1.4        | (constant IV in §3.10)  |
 | `cht`                 | (SHA-1 §2.1.5)         | §2.3                    |
+| `content_certificate` | §2.3 (ECDSA)           | §2.1 (Table 2-1)        |
 | `subdiff`             | §3.2.1 — §3.2.4        | —                       |
 | `mkb`                 | §3.2.5                 | §3.1, §3.4              |
 | `unit_key`            | —                      | §3.9.3                  |
@@ -295,13 +344,17 @@ consulted.
   `verify_host_revocation_list`, `verify_drive_revocation_list`,
   `Certificate::verify_signature`) take a `&ec::Point` parameter the
   caller supplies; tests use a self-issued synthetic LA identity.
-- Content Certificate (BD-Prerecorded §2.1 / Table 2-1) — the
-  AACS-LA-signed wrapper that carries the per-Clip Content Hash
-  Table Digests. The Content **Hash Table** Hash-Unit integrity
-  check it protects (§2.3, `[SHA-1(Hash_Unit)]_lsb_64`) IS
-  implemented in the `cht` module as of round 188; parsing the
-  signed Table 2-1 certificate + verifying its Signature Data and
-  per-Clip digests is the remaining piece.
+- Content Revocation List (PVB §2.7 / Tables 2-2..2-5) — the
+  separately-signed list of revoked Content Certificate IDs,
+  Managed Copy Server Certificate IDs, and Recordable Media
+  Revocation Records the player loads alongside the Content
+  Certificate. The signed Content Certificate Table 2-1 wrapper
+  itself (parse / ECDSA verify / per-CHT digest match / Content
+  Certificate ID + Content Sequence Number decode + BD-Prerecorded
+  Format-Specific Section) IS implemented in `content_certificate`
+  as of round 222; the CRL parse + per-segment Entity Signature
+  verify + Revocation Record match against the on-disc Content
+  Certificate ID is the remaining piece.
 - AACS 2.0 (Ultra HD Blu-ray) — separate spec family, not publicly
   released.
 - BD+ — separate copy-protection layer, not public.

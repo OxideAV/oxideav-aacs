@@ -36,6 +36,7 @@ pub mod aes;
 pub mod ake;
 pub mod cht;
 pub mod content;
+pub mod content_certificate;
 pub mod ec;
 pub mod ecdsa;
 pub mod error;
@@ -58,6 +59,11 @@ pub use crate::cht::{
     LOGICAL_SECTORS_PER_HASH_UNIT, LOGICAL_SECTOR_SIZE,
 };
 pub use crate::content::{decrypt_aligned_unit, encrypt_aligned_unit, ALIGNED_UNIT_SIZE};
+pub use crate::content_certificate::{
+    usage_rules_hash, BdFormatSpecificSection, ContentCertificate, ContentCertificateId,
+    ContentSequenceNumber, CERTIFICATE_TYPE_FIRST_GEN, CONTENT_HASH_TABLE_DIGEST_LEN,
+    SIGNATURE_DATA_LEN,
+};
 pub use crate::ec::{Fp, Point, U160};
 pub use crate::ecdsa::{sign, sign_with_k, verify, Signature};
 pub use crate::error::AacsError;
