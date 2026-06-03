@@ -5,10 +5,69 @@ Content System) decryption layer used by Blu-ray Disc, per the
 publicly-published AACS LA technical specifications **Common Final
 0.953** (Oct 2012) and **BD-Prerecorded Final 0.953** (Oct 2012).
 
-Round 222 adds the **signed Content Certificate** parse/verify path per
-Pre-recorded Video Book §2.4 / §2.5 / §2.6, with the BD-Prerecorded
+Round 229 adds the **Content Revocation List** parse / per-segment
+ECDSA verify / revocation-record lookup path per Pre-recorded Video
+Book §2.7 (Tables 2-2 / 2-3 / 2-4 / 2-5), closing the Out-of-scope
+revocation gap that round 222's Content Certificate layer left as
+"future work". Module [`crl`] now exposes:
+
+- **`ContentRevocationList::parse(bytes)`** — parses a
+  `ContentRevocation.lst` blob into its CRL Header (`List Type`,
+  `List Version`, `Number of Segments`) and the `N` CRL Segments, each
+  of which carries a `Segment Size`, a sequence of structured
+  `RevocationRecord`s, and the trailing 40-byte Entity Signature. The
+  PVB §2.2 trailing-`0x00`-padding rule is enforced; the PVB §2.7
+  first-segment 128 KiB cap is enforced.
+- **`RevocationRecord`** — structured decode of every spec-defined
+  Record Type:
+  - `ContentCertificateId { range, id }` (PVB Table 2-3,
+    `Record_Type == 0x0`) — 12-bit range + 6-byte Content Certificate
+    ID with the spec's "`range == 0` revokes only this ID" semantics
+    and `range > 0` revoking the inclusive `[id, id + range]` span.
+  - `ManagedCopyServerCertificateId { range, id }` (PVB Table 2-4,
+    `Record_Type == 0x1`).
+  - `RecordableMedia(RecordableMediaRevocation { iccid, media_type,
+    content_certificate_id, media_id })` (PVB Table 2-5, the
+    three-contiguous-record `0x2 / 0x3 / 0x4` RMRR layout folded into
+    a single high-level record, with the spec's `1 + 3 + 4 + 7 + 7`
+    bit/byte split correctly reassembled).
+  - `Unknown { record_type, bytes }` per PVB §2.7 ("If a Licensed
+    Product encounters a Revocation Record with a Record_Type value
+    it does not recognize, the record shall be ignored.") — preserved
+    so a forward-compatibility record doesn't cause adjacent valid
+    records to be silently dropped.
+- **`ContentRevocationList::verify_segment_signature(k, aacs_la_pub)`**
+  + **`verify_last_segment_signature`** + **`verify_all_segments`** —
+  `AACS_Verify(AACS_LApub, CRL_Segsig, CRL_Seg)` per PVB §2.7 with the
+  cumulative-prefix semantics ("the signature includes all previous
+  fields including previous Segments and the CRL Header"). Verifying
+  the last segment alone validates every preceding segment.
+- **`ContentRevocationList::is_content_certificate_id_revoked(id)`**
+  + **`is_managed_copy_server_id_revoked(id)`** — global revocation
+  queries that walk every segment's records and apply the
+  spec-defined range semantics; the
+  `is_content_certificate_id_revoked` query also surfaces the
+  embedded Content Certificate IDs inside `RecordableMedia` records
+  whose ICCID flag is `0`.
+- **`ContentRevocationList::recordable_media_revoked(media_type,
+  media_id, content_certificate_id)`** — the four-step §2.7.2
+  (Prepared Video book) applicability check for a `(type, media_id,
+  content_certificate_id)` triple, honouring the ICCID-flag `0/1`
+  branch.
+- **`ContentRevocationList::to_bytes`** — byte-exact round-trip with
+  `parse` for any value that parses cleanly (used by the test
+  fixture builder to mint signed synthetic CRLs).
+
+No real AACS LA Entity public key — AACS LA distributes it only to
+licensees — so `verify_*` takes a caller-supplied `&ec::Point`. The
+crate ships no real disc fixture; the integration suite mints a
+synthetic LA identity and a three-segment CRL covering every defined
+record type, including the Table 2-5 RMRR with both ICCID-flag values.
+
+Round 222 added the **signed Content Certificate** parse/verify path
+per Pre-recorded Video Book §2.4 / §2.5 / §2.6, with the BD-Prerecorded
 Final 0.953 Table 2-1 Format-Specific Section decoded out. Module
-[`content_certificate`] now exposes:
+[`content_certificate`] exposes:
 
 - **`ContentCertificate::parse(bytes)`** — parses one `Content00N.cer`
   blob into its header (Certificate Type, BEE flag,
@@ -322,6 +381,7 @@ consulted.
 | `aes`                 | §2.1.1 — §2.1.4        | (constant IV in §3.10)  |
 | `cht`                 | (SHA-1 §2.1.5)         | §2.3                    |
 | `content_certificate` | §2.3 (ECDSA)           | §2.1 (Table 2-1)        |
+| `crl`                 | §2.3 (ECDSA)           | §2.7 (Tables 2-2..2-5)  |
 | `subdiff`             | §3.2.1 — §3.2.4        | —                       |
 | `mkb`                 | §3.2.5                 | §3.1, §3.4              |
 | `unit_key`            | —                      | §3.9.3                  |
@@ -344,17 +404,12 @@ consulted.
   `verify_host_revocation_list`, `verify_drive_revocation_list`,
   `Certificate::verify_signature`) take a `&ec::Point` parameter the
   caller supplies; tests use a self-issued synthetic LA identity.
-- Content Revocation List (PVB §2.7 / Tables 2-2..2-5) — the
-  separately-signed list of revoked Content Certificate IDs,
-  Managed Copy Server Certificate IDs, and Recordable Media
-  Revocation Records the player loads alongside the Content
-  Certificate. The signed Content Certificate Table 2-1 wrapper
-  itself (parse / ECDSA verify / per-CHT digest match / Content
-  Certificate ID + Content Sequence Number decode + BD-Prerecorded
-  Format-Specific Section) IS implemented in `content_certificate`
-  as of round 222; the CRL parse + per-segment Entity Signature
-  verify + Revocation Record match against the on-disc Content
-  Certificate ID is the remaining piece.
+- Persistent CRL storage (PVB §2.7 "Licensed Products shall retain in
+  non-volatile storage the List Version and the Revocation Record Set
+  #1 of the highest verified List Version"). The crate exposes the
+  primitives to compare list versions and merge / replace records
+  across two CRLs, but the actual persistence layer is a player
+  concern, out of scope here.
 - AACS 2.0 (Ultra HD Blu-ray) — separate spec family, not publicly
   released.
 - BD+ — separate copy-protection layer, not public.

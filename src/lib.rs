@@ -37,6 +37,7 @@ pub mod ake;
 pub mod cht;
 pub mod content;
 pub mod content_certificate;
+pub mod crl;
 pub mod ec;
 pub mod ecdsa;
 pub mod error;
@@ -63,6 +64,13 @@ pub use crate::content_certificate::{
     usage_rules_hash, BdFormatSpecificSection, ContentCertificate, ContentCertificateId,
     ContentSequenceNumber, CERTIFICATE_TYPE_FIRST_GEN, CONTENT_HASH_TABLE_DIGEST_LEN,
     SIGNATURE_DATA_LEN,
+};
+pub use crate::crl::{
+    ContentRevocationList, CrlSegment, ManagedCopyServerCertificateId, RecordableMediaRevocation,
+    RecordableMediaType, RevocationRecord, CRL_HEADER_LEN, LIST_TYPE_FIRST_GEN,
+    RECORD_TYPE_CONTENT_CERTIFICATE_ID, RECORD_TYPE_MANAGED_COPY_SERVER_ID,
+    RECORD_TYPE_RMRR_PART_1, RECORD_TYPE_RMRR_PART_2, RECORD_TYPE_RMRR_PART_3,
+    REVOCATION_RECORD_LEN, SEGMENT_1_SIZE_MAX, SEGMENT_SIGNATURE_LEN,
 };
 pub use crate::ec::{Fp, Point, U160};
 pub use crate::ecdsa::{sign, sign_with_k, verify, Signature};

@@ -7,6 +7,111 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 229 Content Revocation List parse + per-segment
+  ECDSA verify + revocation-record lookup (PVB §2.7 / Tables 2-2..2-5)
+
+New module `crl` implements the AACS-LA-signed Content Revocation List
+(`ContentRevocation.lst` stored under the `\AACS\` and
+`\AACS\DUPLICATE\` directories) — the signed list of revoked Content
+Certificate IDs, Managed Copy Server Certificate IDs, and Recordable
+Media Revocation Records (RMRR) a Licensed Player consults before
+honouring the Content Certificate the round-222 layer parses /
+verifies.
+
+- **`ContentRevocationList::parse(bytes)`** — decodes a
+  `ContentRevocation.lst` blob into:
+  - The 4-byte CRL Header (`List Type` 4 bits + reserved nibble, 2-byte
+    big-endian `List Version`, 1-byte `Number of Segments`).
+  - `N` `CrlSegment { segment_size, records, signature }` records, each
+    starting with a 4-byte `Segment Size` field, then a Revocation
+    Record Set of decoded `RevocationRecord`s, then a trailing 40-byte
+    Entity Signature. The Segment Size #1 cap (≤ 128 KiB − CRL Header
+    per PVB §2.7) is enforced; trailing `0x00` padding bytes after the
+    last segment are tolerated per the PVB §2.2 mastering rule.
+- **`RevocationRecord`** enum — structured decode of every spec-defined
+  Record Type plus a forward-compatibility `Unknown` variant:
+  - `ContentCertificateId { range, id }` (PVB Table 2-3,
+    `Record_Type == 0x0`) — 4-bit Record_Type + 12-bit Range + 6-byte
+    Content Certificate ID.
+  - `ManagedCopyServerCertificateId { range, id }` (PVB Table 2-4,
+    `Record_Type == 0x1`).
+  - `RecordableMedia(RecordableMediaRevocation)` (PVB Table 2-5, the
+    three contiguous `0x2 / 0x3 / 0x4` records folded on parse into one
+    high-level record carrying the `ICCID` flag, 3-bit `Recordable
+    Media Type`, 6-byte Content Certificate ID, and 16-byte Media ID).
+    A 3-record run that doesn't begin with `Record_Type == 0x2` or
+    whose `0x3` / `0x4` continuation is missing is preserved verbatim
+    as `Unknown` so adjacent valid records still apply.
+  - `Unknown { record_type, bytes }` per PVB §2.7 ("If a Licensed
+    Product encounters a Revocation Record with a Record_Type value
+    it does not recognize, the record shall be ignored.") — preserves
+    the raw 8 bytes so a forward-compatibility record doesn't cause
+    adjacent valid records to be silently dropped.
+- **`ContentRevocationList::verify_segment_signature(k, aacs_la_pub)`**
+  + **`verify_last_segment_signature(aacs_la_pub)`** +
+  **`verify_all_segments(aacs_la_pub)`** — run
+  `AACS_Verify(AACS_LApub, CRL_Segsig, CRL_Seg)` with the spec's
+  cumulative-prefix signed range: segment `k`'s signed payload is
+  "CRL Header || segment 0 bytes (size + records + signature) || … ||
+  segment k bytes (size + records)" — everything before segment `k`'s
+  own 40-byte signature. The `verify_last_segment_signature` helper
+  encodes the PVB §2.7 spec optimisation ("when reading more than one
+  CRL Segment, only the signature of the last Segment shall be
+  checked since that signature includes all previous fields including
+  previous Segments and the CRL Header").
+- **`ContentRevocationList::is_content_certificate_id_revoked(id)`**
+  + **`is_managed_copy_server_id_revoked(id)`** — global revocation
+  queries that walk every segment's records and apply the spec
+  range-match semantics; the Content-Certificate query additionally
+  surfaces the embedded Content Certificate IDs of any `RecordableMedia`
+  records whose ICCID flag is `0` (PVB §2.7.2 step 4 from the Prepared
+  Video book).
+- **`ContentRevocationList::recordable_media_revoked(media_type,
+  media_id, content_certificate_id)`** — the four-step §2.7.2
+  applicability check for a `(type, media_id, content_certificate_id)`
+  triple. Returns `true` only when an RMRR matches both the media
+  type and the media ID and either its ICCID flag is `1` or its
+  embedded Content Certificate ID matches the queried CCID.
+- **`ContentRevocationList::to_bytes`** — byte-exact round-trip with
+  `parse` for any value that parsed cleanly (used by the test fixture
+  builder to mint signed synthetic CRLs).
+- New types `ManagedCopyServerCertificateId(pub [u8; 6])`,
+  `RecordableMediaRevocation { iccid, media_type,
+  content_certificate_id, media_id }`, and `RecordableMediaType`
+  (`BdRecordable` / `HdDvdRecordable` / `DvdRecordable` /
+  `PlusRecordable` / `Reserved(u8)` for forward-compatibility).
+- Public constants `LIST_TYPE_FIRST_GEN`, `CRL_HEADER_LEN`,
+  `REVOCATION_RECORD_LEN`, `SEGMENT_SIGNATURE_LEN`,
+  `SEGMENT_1_SIZE_MAX`, and the five `RECORD_TYPE_*` tag values.
+
+No new error variants — the module reuses `AacsError::Truncated`,
+`OversizedRecord`, `InvalidValue`, and `MkbSignatureInvalid` so the
+consumer can fold all `AACS_Verify` failures through the same branch
+that already handles the MKB-side and Content-Certificate-side
+ECDSA verify failures.
+
+Companion integration test `tests/synth_round229_crl.rs` (10 cases)
+mints a synthetic AACS LA Entity ECDSA key pair, builds a fully
+populated three-segment CRL (segment 0: 4 CCID records including a
+12-ID range; segment 1: 2 MCS records; segment 2: 1 RMRR with
+ICCID=0), then pins: byte-exact round trip, per-segment + last-segment
++ all-segment signature verification, cumulative-prefix signed-range
+lengths, content-certificate range semantics, MCS range semantics,
+RMRR with ICCID=1 (matches by media only), RMRR with ICCID=0 (also
+revokes by CCID), wrong public key rejects every segment, in-place
+record tampering breaks the last-segment signature, trailing
+`0x00`-padding tolerance, and `Unknown`-record preservation.
+
+Lib-side test module (18 cases) covers single-segment round trips for
+each record type, the RMRR bit-layout (ICCID at bit 3, media type at
+bits 2..=0 of byte 0 of record 1), the 16-byte Media ID
+reassembly across the three on-wire records, the Range-match
+semantics for both CCID and MCS records, multi-segment cumulative
+prefix verification, malformed RMRR-1-without-2-or-3 preservation as
+`Unknown`, segment-size-too-small rejection, the
+first-segment 128 KiB cap, zero-`Number_of_Segments` rejection,
+truncated-buffer rejection, and trailing-non-zero-byte rejection.
+
 ### Added — Round 222 signed Content Certificate parse + verify
   (PVB §2.4 / §2.5 / §2.6, BD-Prerecorded Table 2-1)
 
