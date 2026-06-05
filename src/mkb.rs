@@ -68,6 +68,48 @@ impl MkbType {
     pub fn requires_kcd(self) -> bool {
         matches!(self, Self::Type4)
     }
+
+    /// `true` when the low 16 bits of the on-wire MKBType field equal
+    /// the spec-mandated AACS marker `0x1003`.
+    ///
+    /// Per Common spec §3.2.5.1.1 Table 3-2 the MKBType field always
+    /// has the form `000x_1003₁₆`: the high nibble of the high-order
+    /// byte encodes the generation (3, 4, or A in the three values the
+    /// spec defines) and the low 16 bits are the fixed AACS marker
+    /// `0x1003`. A field whose low 16 bits are anything else is not a
+    /// spec-compliant AACS MKBType, regardless of what generation
+    /// nibble it carries.
+    ///
+    /// The parser does **not** reject such records (the spec leaves
+    /// "manufacturer specific" behaviour to the device for malformed
+    /// MKBs), so the value is still surfaced through
+    /// [`MkbType::Other`]; this predicate lets a caller assert
+    /// well-formedness explicitly. [`Self::Type3`] / [`Self::Type4`] /
+    /// [`Self::Type10`] always return `true`.
+    pub fn has_aacs_marker(self) -> bool {
+        (self.as_u32() & 0x0000_FFFF) == 0x0000_1003
+    }
+
+    /// The MKB generation number encoded in the high-order byte of the
+    /// on-wire MKBType field — `3`, `4`, or `10` for the three spec-
+    /// defined values (Type 3 / Type 4 / Type 10), or the high-byte
+    /// value for any other `000x_1003`-marker-bearing variant carried
+    /// through [`MkbType::Other`].
+    ///
+    /// Returns `None` when the value's low 16 bits don't match the
+    /// AACS marker `0x1003` (see [`Self::has_aacs_marker`]) — in that
+    /// case the high-byte cannot meaningfully be interpreted as a
+    /// generation under the Common spec §3.2.5.1.1 layout.
+    pub fn generation(self) -> Option<u8> {
+        if !self.has_aacs_marker() {
+            return None;
+        }
+        // Generation lives in the high 16 bits per Table 3-2's
+        // `000x_1003` notation. The defined generations (3, 4, 10) all
+        // fit in a single byte, so a `u8` is sufficient until the
+        // spec defines a generation beyond 0xFF (which it does not).
+        Some(((self.as_u32() >> 16) & 0x00FF) as u8)
+    }
 }
 
 /// One entry in a Host or Drive Revocation List (Common spec
@@ -350,6 +392,29 @@ impl Mkb {
         };
         let plaintext = aes_128_ecb_decrypt(km, &vd);
         plaintext[..8] == VERIFY_MEDIA_KEY_SENTINEL
+    }
+
+    /// MKB generation number from the leading Type-and-Version Record
+    /// per Common spec §3.2.5.1.1 — see [`MkbType::generation`].
+    ///
+    /// Returns `None` when the parser did not see a Type-and-Version
+    /// Record (an [`Self::parse`] return would have errored out with
+    /// [`AacsError::MissingTypeAndVersionRecord`] in that case, so this
+    /// `None` only arises on a hand-constructed [`Mkb`]) or when the
+    /// recorded MKBType field does not carry the spec-mandated
+    /// `0x1003` marker in its low 16 bits.
+    pub fn generation(&self) -> Option<u8> {
+        self.mkb_type.and_then(|t| t.generation())
+    }
+
+    /// `true` for a test Media Key Block.
+    ///
+    /// Per Common spec §3.2.5.1.1 Table 3-2 the Version Number begins
+    /// at 1; "0 is a special value used for test Media Key Blocks". A
+    /// Licensed Player that wants to refuse test MKBs in production
+    /// can gate on this predicate before any further processing.
+    pub fn is_test_mkb(&self) -> bool {
+        self.version == 0
     }
 
     /// Verify the End-of-Media-Key-Block Record signature per Common
@@ -863,6 +928,104 @@ mod tests {
         ] {
             assert_eq!(MkbType::from_u32(t.as_u32()), t);
         }
+    }
+
+    /// Spec-mandated `0x1003` marker check on the low 16 bits of the
+    /// MKBType field per Common §3.2.5.1.1 Table 3-2 (`000x_1003₁₆`).
+    /// The three named variants always carry the marker; an `Other`
+    /// value with a `…_1003` tail also does; a non-`1003` tail does
+    /// not.
+    #[test]
+    fn mkb_type_marker_recognises_aacs_form() {
+        assert!(MkbType::Type3.has_aacs_marker());
+        assert!(MkbType::Type4.has_aacs_marker());
+        assert!(MkbType::Type10.has_aacs_marker());
+        // A forward-compat generation number with the right marker.
+        assert!(MkbType::Other(0x0007_1003).has_aacs_marker());
+        // Wrong low 16 bits — not a spec-compliant MKBType field.
+        assert!(!MkbType::Other(0x0003_1004).has_aacs_marker());
+        assert!(!MkbType::Other(0xDEAD_BEEF).has_aacs_marker());
+        // The all-zero field is also not a valid AACS MKBType.
+        assert!(!MkbType::Other(0x0000_0000).has_aacs_marker());
+    }
+
+    /// `MkbType::generation` returns the high-byte for any
+    /// marker-bearing value, and `None` for anything without the
+    /// `0x1003` low-16-bit marker.
+    #[test]
+    fn mkb_type_generation_extracts_high_byte_when_marker_present() {
+        assert_eq!(MkbType::Type3.generation(), Some(3));
+        assert_eq!(MkbType::Type4.generation(), Some(4));
+        assert_eq!(MkbType::Type10.generation(), Some(10));
+        assert_eq!(MkbType::Other(0x0007_1003).generation(), Some(7));
+        assert_eq!(MkbType::Other(0x00FF_1003).generation(), Some(0xFF));
+        // No marker → no spec-defined generation reading.
+        assert_eq!(MkbType::Other(0x0003_1004).generation(), None);
+        assert_eq!(MkbType::Other(0xDEAD_BEEF).generation(), None);
+    }
+
+    /// End-to-end: parse a synthetic MKB whose Type-and-Version Record
+    /// declares `(MkbType, Version)` and confirm both new typed
+    /// accessors render the expected values for each spec-defined
+    /// generation, for a forward-compat generation, for a malformed
+    /// non-`1003` field, and for the spec's special `version == 0`
+    /// test-MKB sentinel.
+    #[test]
+    fn mkb_generation_and_is_test_mkb_render_from_parsed_type_record() {
+        fn parse_minimal(mkb_type: u32, version: u32) -> Mkb {
+            // Type-and-Version + End-of-MKB (signature payload zeros).
+            let mut bytes = Vec::new();
+            let mut tv = Vec::new();
+            tv.extend_from_slice(&mkb_type.to_be_bytes());
+            tv.extend_from_slice(&version.to_be_bytes());
+            bytes.extend(write_record(0x10, &tv));
+            bytes.extend(write_record(0x02, &[0u8; 40]));
+            Mkb::parse(&bytes).expect("synthetic MKB must parse")
+        }
+
+        // Type 3 / version 1 → generation 3, not a test MKB.
+        let m = parse_minimal(0x0003_1003, 1);
+        assert_eq!(m.generation(), Some(3));
+        assert!(!m.is_test_mkb());
+
+        // Type 4 / version 7 → generation 4, not a test MKB.
+        let m = parse_minimal(0x0004_1003, 7);
+        assert_eq!(m.generation(), Some(4));
+        assert!(!m.is_test_mkb());
+
+        // Type 10 / version 99 → generation 10.
+        let m = parse_minimal(0x000A_1003, 99);
+        assert_eq!(m.generation(), Some(10));
+        assert!(!m.is_test_mkb());
+
+        // Forward-compat: marker-bearing `0x0007_1003` round-trips as
+        // generation 7 even though the spec defines no Type 7 today.
+        let m = parse_minimal(0x0007_1003, 1);
+        assert_eq!(m.generation(), Some(7));
+        assert!(matches!(m.mkb_type, Some(MkbType::Other(0x0007_1003))));
+
+        // Malformed: a non-`1003` low-16-bit field — parser still
+        // accepts (manufacturer-specific behaviour per §3.2.5 "If an
+        // MKB contains [...] is otherwise improperly formatted, the
+        // device behavior shall be manufacturer specific"), but
+        // `generation()` surfaces `None` so the caller can refuse.
+        let m = parse_minimal(0x0003_1004, 1);
+        assert_eq!(m.generation(), None);
+
+        // Version 0 → test MKB sentinel, regardless of generation.
+        let m = parse_minimal(0x0003_1003, 0);
+        assert!(m.is_test_mkb());
+        assert_eq!(m.generation(), Some(3));
+
+        // A hand-constructed `Mkb` with no Type-and-Version Record
+        // surfaces `None` from `generation()` rather than panicking;
+        // version defaults to 0 so `is_test_mkb()` is `true` for the
+        // default. This mirrors the parser's behaviour: it would
+        // refuse to return such an `Mkb` via `parse`, but the
+        // accessors must not panic on a struct built by hand.
+        let m = Mkb::default();
+        assert_eq!(m.generation(), None);
+        assert!(m.is_test_mkb());
     }
 
     /// `is_verified_media_key` mirrors `verify_media_key` but returns

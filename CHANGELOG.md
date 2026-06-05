@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 236 MKB Type-and-Version typed accessors
+  (Common §3.2.5.1.1 / Table 3-2)
+
+Three small, surface-level typed accessors on the parsed `Mkb` that
+expose Type-and-Version Record fields a downstream consumer would
+otherwise have to extract by hand from the existing `mkb_type` / raw
+`version` fields:
+
+- **`MkbType::has_aacs_marker() -> bool`** — verifies the low 16 bits
+  of the on-wire MKBType field match the spec-mandated `0x1003`
+  marker (Table 3-2's `000x_1003₁₆` layout). The three named variants
+  (`Type3` / `Type4` / `Type10`) always return `true`; the
+  `Other(u32)` catch-all returns `true` iff the low 16 bits actually
+  match. The parser does **not** reject non-marker values
+  (manufacturer-specific behaviour per §3.2.5 final paragraph for an
+  improperly formatted MKB), so the predicate lets a caller assert
+  well-formedness explicitly.
+
+- **`MkbType::generation() -> Option<u8>`** — returns the high-byte
+  of the on-wire MKBType field when the `0x1003` marker is present
+  (so `Type3 → Some(3)`, `Type4 → Some(4)`, `Type10 → Some(10)`,
+  `Other(0x0007_1003) → Some(7)` for forward-compat with a
+  hypothetical generation the spec might define later), and `None`
+  when the marker doesn't match.
+
+- **`Mkb::generation() -> Option<u8>`** — convenience wrapper that
+  forwards to `mkb_type.and_then(|t| t.generation())`. Returns `None`
+  on a hand-constructed `Mkb` with no Type-and-Version Record (the
+  parser would have errored out with `MissingTypeAndVersionRecord`
+  before returning such an `Mkb`).
+
+- **`Mkb::is_test_mkb() -> bool`** — Common §3.2.5.1.1 reads "The
+  Version Numbers begin at 1; 0 is a special value used for test
+  Media Key Blocks." This predicate surfaces that sentinel so a
+  Licensed Player that wants to refuse test MKBs in production can
+  gate on it before any further processing.
+
+Pure surface additions: no behavioural change to `Mkb::parse`, no new
+parse-error variants, no fixture changes. One new test
+(`mkb_generation_and_is_test_mkb_render_from_parsed_type_record`)
+parses synthetic MKBs covering every spec-defined generation, a
+forward-compat generation, a malformed non-`1003` field, the
+`version == 0` test sentinel, and a default-constructed `Mkb`, and
+pins the accessors' contract for each case. Two additional unit
+tests cover `MkbType::has_aacs_marker` and `MkbType::generation` on
+the enum variants directly.
+
 ### Added — Round 229 Content Revocation List parse + per-segment
   ECDSA verify + revocation-record lookup (PVB §2.7 / Tables 2-2..2-5)
 

@@ -5,6 +5,25 @@ Content System) decryption layer used by Blu-ray Disc, per the
 publicly-published AACS LA technical specifications **Common Final
 0.953** (Oct 2012) and **BD-Prerecorded Final 0.953** (Oct 2012).
 
+Round 236 adds three small typed accessors that surface
+Type-and-Version Record fields parsed under Common §3.2.5.1.1 /
+Table 3-2 (`MKBType: 000x_1003₁₆`, `Version Number`):
+
+- **`MkbType::has_aacs_marker() -> bool`** — verifies the on-wire
+  field's low 16 bits match the spec-mandated `0x1003` marker. Useful
+  when a caller wants to assert well-formedness on a value carried
+  through the `Other(u32)` catch-all (the parser does not reject
+  non-marker values; §3.2.5 leaves the behaviour for an improperly
+  formatted MKB "manufacturer specific").
+- **`MkbType::generation() -> Option<u8>`** + the convenience
+  **`Mkb::generation() -> Option<u8>`** — the high-byte of the MKBType
+  field as a generation number (`3`, `4`, or `10` for the three
+  spec-defined values; forward-compat with hypothetical higher
+  generations as long as the `0x1003` marker is intact). `None` when
+  the marker doesn't match.
+- **`Mkb::is_test_mkb() -> bool`** — the Common-spec §3.2.5.1.1
+  Version-Number-`0` test-MKB sentinel.
+
 Round 229 adds the **Content Revocation List** parse / per-segment
 ECDSA verify / revocation-record lookup path per Pre-recorded Video
 Book §2.7 (Tables 2-2 / 2-3 / 2-4 / 2-5), closing the Out-of-scope
