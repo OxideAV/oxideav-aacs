@@ -5,6 +5,35 @@ Content System) decryption layer used by Blu-ray Disc, per the
 publicly-published AACS LA technical specifications **Common Final
 0.953** (Oct 2012) and **BD-Prerecorded Final 0.953** (Oct 2012).
 
+Round 240 adds the **REPORT KEY Binding Nonce** sub-payload pair
+(Key Format `0x20` / `0x21`) per AACS Common §4.14.2.4 Table 4-10
+and §4.14.2.5 Table 4-11. The two named constants
+`KF_REPORT_AACS_BINDING_NONCE_GEN` (`0x20`) and
+`KF_REPORT_AACS_BINDING_NONCE_READ` (`0x21`) have been declared since
+round 93's Phase B wire layer landed; round 240 fills in the typed
+constructor + parser surface around them:
+
+- **`ReportKey::aacs_binding_nonce_gen(agid, starting_lba, block_count)`** —
+  generate-and-store CDB constructor (§4.7.1). The LBA Extent triple
+  lands in CDB bytes 2..5 (big-endian) and byte 6 per AACS Common
+  §4.14.2 final paragraph.
+- **`ReportKey::aacs_binding_nonce_read(agid, starting_lba, block_count)`** —
+  read-from-medium CDB constructor (§4.7.2). Same CDB wire layout;
+  the Key Format field is the spec's only distinguishing bit.
+- **`BindingNonceResponse { binding_nonce: [u8; 16], mac: [u8; 16] }`** +
+  **`parse_report_key_binding_nonce(buf)`** — decoded response. Both
+  Key Formats share the 36-byte wire layout
+  `[length:u16=0x0022][reserved:u16][nonce:16][mac:16]`.
+- **`BINDING_NONCE_LEN`** = 16, **`BINDING_NONCE_MAC_LEN`** = 16.
+
+The 16-byte MAC is `Dm = CMAC(BK, Nonce)` under the §4.3-derived Bus
+Key per the §4.7.1 / §4.7.2 transferred-binding-nonce protocol; the
+caller verifies it against its own `Hm = CMAC(BK, Nonce)` after
+deriving the Bus Key from the AKE. `MockDrive` dispatches both Key
+Formats, records the `(key_format, starting_lba, block_count)` triple
+in `last_binding_nonce_op`, and in `auth` mode recomputes the MAC
+under the synthetic Bus Key.
+
 Round 236 adds three small typed accessors that surface
 Type-and-Version Record fields parsed under Common §3.2.5.1.1 /
 Table 3-2 (`MKBType: 000x_1003₁₆`, `Version Number`):

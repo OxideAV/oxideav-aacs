@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 240 REPORT KEY Binding Nonce sub-payloads
+  (Common §4.14.2.4 Table 4-10 / §4.14.2.5 Table 4-11)
+
+The two AACS Key Class `0x02` Key Format codes the spec defines
+alongside the previously-implemented AGID / Drive Cert Challenge /
+Drive Key / Drive Cert / Invalidate-AGID set — `0x20` (Binding Nonce —
+generated in drive) and `0x21` (Binding Nonce — read from medium) —
+were declared as named constants since round 93 but had no typed CDB
+constructor or response parser. Round 240 fills that hole:
+
+- **`ReportKey::aacs_binding_nonce_gen(agid, starting_lba, block_count)`** —
+  CDB constructor for the generate-and-store variant. The LBA Extent
+  identified by `(starting_lba, block_count)` lands in CDB bytes 2..5
+  (big-endian) and byte 6 per AACS Common §4.14.2 final paragraph; the
+  rest of the CDB follows Table 513.
+- **`ReportKey::aacs_binding_nonce_read(agid, starting_lba, block_count)`** —
+  CDB constructor for the read-from-medium variant. Same wire layout;
+  the only difference is the Key Format field (`0x21` vs `0x20`),
+  which selects the §4.7.2 read protocol over §4.7.1 generate.
+- **`BindingNonceResponse { binding_nonce: [u8; 16], mac: [u8; 16] }`** —
+  decoded response. Both Key Formats share the 36-byte response wire
+  layout (Tables 4-10 and 4-11 are identical):
+  `[length:u16=0x0022][reserved:u16][nonce:16][mac:16]`.
+- **`parse_report_key_binding_nonce(buf)`** — parser for that wire
+  layout. A single parser covers both Key Formats.
+- **`BINDING_NONCE_LEN`** = 16 and **`BINDING_NONCE_MAC_LEN`** = 16 —
+  named constants for the two payload fields.
+
+The 16-byte MAC the response carries is `Dm = CMAC(BK, Nonce)` under
+the §4.3-derived Bus Key per the §4.7.1 / §4.7.2 transferred-binding-
+nonce protocol; the caller validates it against its own
+`Hm = CMAC(BK, Nonce)` after deriving the Bus Key from the §4.3 AKE.
+
+`MockDrive` now dispatches both Key Format codes and stores the
+`(key_format, starting_lba, block_count)` triple from the most recent
+Binding Nonce CDB in a new `last_binding_nonce_op: Option<(u8, u32,
+u8)>` field, so a test can confirm the AACS Common §4.14.2 LBA-Extent
+CDB packing. In `auth` mode the mock recomputes the MAC with
+`aes_128_cmac(bus_key, binding_nonce)` per §4.7; in static mode it
+returns the fixture `binding_nonce_mac` verbatim. Static-fixture
+`binding_nonce` / `binding_nonce_mac` slots use the same
+index-pattern-tagging idiom as the existing Volume-ID / PMSN / Media-ID
+fixture bytes.
+
+Companion test suite `tests/synth_round240_binding_nonce.rs`
+(7 cases) covers both Key Formats end-to-end through `MockDrive`,
+asserts the 36-byte response length matches Table 4-10, pins the LBA
+Extent CDB packing (bytes 2..5 big-endian + byte 6), distinguishes
+`0x20` from `0x21` via the CDB Key Format field, and rejects malformed
+inputs (wrong length field, truncated payload). Five additional unit
+tests live in `src/mmc.rs` alongside the existing CDB-layout cases.
+
 ### Added — Round 236 MKB Type-and-Version typed accessors
   (Common §3.2.5.1.1 / Table 3-2)
 

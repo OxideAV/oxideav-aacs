@@ -166,6 +166,14 @@ pub const VOLUME_ID_LEN: usize = 16;
 /// 128-bit (16-byte) Message Authentication Code accompanying the
 /// Volume Identifier (and other §4.14.3 IDs) — Table 4-15 bytes 20..35.
 pub const ID_MAC_LEN: usize = 16;
+/// 128-bit (16-byte) Binding Nonce returned by REPORT KEY Key Format
+/// `0x20` / `0x21` — AACS Common §4.14.2.4 Table 4-10 bytes 4..19 (and
+/// §4.14.2.5 Table 4-11, identical layout).
+pub const BINDING_NONCE_LEN: usize = 16;
+/// 128-bit (16-byte) Message Authentication Code accompanying the
+/// Binding Nonce in the REPORT KEY Key Format `0x20` / `0x21` response —
+/// AACS Common §4.14.2.4 Table 4-10 bytes 20..35.
+pub const BINDING_NONCE_MAC_LEN: usize = 16;
 
 // ---------------------------------------------------------------------
 // REPORT_KEY (0xA4) CDB
@@ -272,6 +280,53 @@ impl ReportKey {
             lba_or_starting_offset: 0,
             block_count_function: 0,
             allocation_length: 96,
+            control: 0,
+        }
+    }
+
+    /// Constructor for the Binding Nonce *generate-and-store* request
+    /// (Key Format `0x20`, AACS Common §4.14.2.4 / Table 4-10, MMC-6
+    /// §6.28.3.2.5 / Table 529). The drive generates a fresh 16-byte
+    /// Binding Nonce, persists it for the LBA Extent identified by
+    /// `starting_lba` + `block_count`, and returns the 36-byte payload
+    /// (`length:u16=0x0022 || reserved:u16 || nonce:16 || mac:16`).
+    ///
+    /// `starting_lba` populates CDB bytes 2..5 (the LBA Extent's
+    /// starting address) and `block_count` populates byte 6 (the LBA
+    /// Extent's block count) per §4.14.2 final paragraph. A valid
+    /// Bus Key established by the §4.3 AKE is a precondition; absent
+    /// it a real drive surfaces SCSI sense `5/6F/02 KEY NOT
+    /// ESTABLISHED` per AACS Common §4.7.1 (the wire-format reference
+    /// in `docs/container/aacs/mmc/aacs-keyclass-02-wire-format.md`
+    /// records this dependency).
+    pub fn aacs_binding_nonce_gen(agid: u8, starting_lba: u32, block_count: u8) -> Self {
+        Self {
+            key_class: KEY_CLASS_AACS,
+            key_format: KF_REPORT_AACS_BINDING_NONCE_GEN,
+            agid: agid & 0x03,
+            lba_or_starting_offset: starting_lba,
+            block_count_function: block_count,
+            // 4-byte header + 16-byte Binding Nonce + 16-byte MAC.
+            allocation_length: 36,
+            control: 0,
+        }
+    }
+
+    /// Constructor for the Binding Nonce *read-from-medium* request
+    /// (Key Format `0x21`, AACS Common §4.14.2.5 / Table 4-11, MMC-6
+    /// §6.28.3.2.6 / Table 530). Same wire layout as the generate
+    /// command; the difference is that the drive returns the nonce it
+    /// previously stored for the LBA Extent rather than minting a new
+    /// one (AACS Common §4.7.2 read protocol). Bus Key precondition is
+    /// the same.
+    pub fn aacs_binding_nonce_read(agid: u8, starting_lba: u32, block_count: u8) -> Self {
+        Self {
+            key_class: KEY_CLASS_AACS,
+            key_format: KF_REPORT_AACS_BINDING_NONCE_READ,
+            agid: agid & 0x03,
+            lba_or_starting_offset: starting_lba,
+            block_count_function: block_count,
+            allocation_length: 36,
             control: 0,
         }
     }
@@ -680,6 +735,25 @@ pub struct MediaIdentifierResponse {
     pub mac: [u8; ID_MAC_LEN],
 }
 
+/// Decoded Binding Nonce response (MMC-6 Table 529 / Table 530; AACS
+/// Common §4.14.2.4 Table 4-10 / §4.14.2.5 Table 4-11). 36 bytes on
+/// the wire — 4-byte header (`length:u16=0x0022 || reserved:u16`) +
+/// 16-byte Binding Nonce + 16-byte MAC.
+///
+/// The wire layout is identical for the *generate-and-store*
+/// (Key Format `0x20`) and *read-from-medium* (Key Format `0x21`)
+/// variants; the distinction lives entirely in the CDB Key Format
+/// field, not the response payload. The Bus Key established by the
+/// §4.3 AKE keys the MAC (`Dm = CMAC(BK, Nonce)` per the §4.7.1
+/// transferred-binding-nonce protocol).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BindingNonceResponse {
+    /// 128-bit Binding Nonce returned by the drive.
+    pub binding_nonce: [u8; BINDING_NONCE_LEN],
+    /// 128-bit MAC over the Binding Nonce keyed under the Bus Key.
+    pub mac: [u8; BINDING_NONCE_MAC_LEN],
+}
+
 /// Decoded AACS Media Key Block Pack response (MMC-6 Table 384; AACS
 /// Common §4.14.3.4 Table 4-18). Variable size on the wire: 4-byte
 /// header `[length:u16][reserved:u8][total_packs:u8]` followed by
@@ -860,6 +934,36 @@ pub fn parse_media_id_response(buf: &[u8]) -> Result<MediaIdentifierResponse, Aa
     let mut mac = [0u8; ID_MAC_LEN];
     mac.copy_from_slice(&buf[20..20 + ID_MAC_LEN]);
     Ok(MediaIdentifierResponse { media_id, mac })
+}
+
+/// Parse the 36-byte response payload for `REPORT_KEY` Key Format
+/// `0x20` (Binding Nonce — generated in drive) or Key Format `0x21`
+/// (Binding Nonce — read from medium) per AACS Common §4.14.2.4
+/// Table 4-10 and §4.14.2.5 Table 4-11 / MMC-6 §6.28.3.2.5 Table 529
+/// and §6.28.3.2.6 Table 530.
+///
+/// Wire layout: `[length:u16=0x0022][reserved:u16][nonce:16][mac:16]`.
+/// Both Key Formats share the same response layout, so a single parser
+/// covers both. The 16-byte MAC is `Dm = CMAC(BK, Nonce)` per the
+/// §4.7.1 / §4.7.2 transferred-binding-nonce protocol; the caller
+/// validates it against its own `Hm = CMAC(BK, Nonce)` after deriving
+/// the Bus Key.
+pub fn parse_report_key_binding_nonce(buf: &[u8]) -> Result<BindingNonceResponse, AacsError> {
+    let length = read_u16_be(buf, "Binding Nonce response header")?;
+    if length != 0x0022 {
+        return Err(AacsError::InvalidValue {
+            what: "Binding Nonce response length",
+            value: length as u64,
+        });
+    }
+    if buf.len() < 36 {
+        return Err(AacsError::Truncated("Binding Nonce response payload"));
+    }
+    let mut binding_nonce = [0u8; BINDING_NONCE_LEN];
+    binding_nonce.copy_from_slice(&buf[4..4 + BINDING_NONCE_LEN]);
+    let mut mac = [0u8; BINDING_NONCE_MAC_LEN];
+    mac.copy_from_slice(&buf[20..20 + BINDING_NONCE_MAC_LEN]);
+    Ok(BindingNonceResponse { binding_nonce, mac })
 }
 
 /// Parse the variable-length response payload for `READ_DISC_STRUCTURE`
@@ -1080,6 +1184,26 @@ pub struct MockDrive {
     /// 128-bit MAC over the Media Identifier; in `auth` mode the mock
     /// recomputes it from the Bus Key per §4.6.
     pub media_id_mac: [u8; ID_MAC_LEN],
+    /// 128-bit Binding Nonce the mock returns for REPORT KEY Key
+    /// Format `0x20` (generate-and-store) and `0x21` (read). The same
+    /// value is returned by both formats: the mock does not model a
+    /// persistent per-LBA-Extent nonce store; tests that need the
+    /// generate-vs-read distinction inspect [`Self::last_binding_nonce_op`]
+    /// directly. (AACS Common §4.14.2.4 Table 4-10 / §4.14.2.5
+    /// Table 4-11.)
+    pub binding_nonce: [u8; BINDING_NONCE_LEN],
+    /// 128-bit MAC over the Binding Nonce. In `auth` mode the mock
+    /// recomputes it from the Bus Key per §4.7.1 / §4.7.2; otherwise
+    /// this field is returned verbatim.
+    pub binding_nonce_mac: [u8; BINDING_NONCE_MAC_LEN],
+    /// Captured `(key_format, starting_lba, block_count)` from the last
+    /// Binding Nonce REPORT KEY the mock dispatched. `key_format` is
+    /// either [`KF_REPORT_AACS_BINDING_NONCE_GEN`] (`0x20`) or
+    /// [`KF_REPORT_AACS_BINDING_NONCE_READ`] (`0x21`); the LBA Extent
+    /// triple is taken from CDB bytes 2..5 / byte 6 per AACS Common
+    /// §4.14.2 final paragraph. `None` until the host issues a Binding
+    /// Nonce command.
+    pub last_binding_nonce_op: Option<(u8, u32, u8)>,
     /// SEND KEY Host Certificate Challenge payload captured from the
     /// last `aacs_host_cert_challenge` issued. `None` until the host
     /// pushes one.
@@ -1112,6 +1236,9 @@ impl Default for MockDrive {
             media_serial_mac: [0u8; ID_MAC_LEN],
             media_identifier: [0u8; VOLUME_ID_LEN],
             media_id_mac: [0u8; ID_MAC_LEN],
+            binding_nonce: [0u8; BINDING_NONCE_LEN],
+            binding_nonce_mac: [0u8; BINDING_NONCE_MAC_LEN],
+            last_binding_nonce_op: None,
             last_host_cert_chal: None,
             last_host_key: None,
             agid_invalidated: false,
@@ -1181,6 +1308,14 @@ impl MockDrive {
         for (i, b) in media_id_mac.iter_mut().enumerate() {
             *b = 0x60 ^ (i as u8);
         }
+        let mut binding_nonce = [0u8; BINDING_NONCE_LEN];
+        for (i, b) in binding_nonce.iter_mut().enumerate() {
+            *b = 0x20 | (i as u8);
+        }
+        let mut binding_nonce_mac = [0u8; BINDING_NONCE_MAC_LEN];
+        for (i, b) in binding_nonce_mac.iter_mut().enumerate() {
+            *b = 0x10 ^ (i as u8);
+        }
         Self {
             agid_to_return: 1,
             drive_nonce,
@@ -1193,6 +1328,9 @@ impl MockDrive {
             media_serial_mac,
             media_identifier,
             media_id_mac,
+            binding_nonce,
+            binding_nonce_mac,
+            last_binding_nonce_op: None,
             last_host_cert_chal: None,
             last_host_key: None,
             agid_invalidated: false,
@@ -1259,6 +1397,31 @@ impl DriveCommand for MockDrive {
                         let mut out = Vec::with_capacity(96);
                         out.extend_from_slice(&[0x00, 0x5E, 0x00, 0x00]);
                         out.extend_from_slice(&self.drive_cert);
+                        Ok(ScsiResponse::good(out))
+                    }
+                    KF_REPORT_AACS_BINDING_NONCE_GEN | KF_REPORT_AACS_BINDING_NONCE_READ => {
+                        // Record the LBA Extent the host targeted so a
+                        // test can confirm the CDB byte 2..5 / byte 6
+                        // packing per AACS Common §4.14.2 final
+                        // paragraph. Both generate (`0x20`) and read
+                        // (`0x21`) use the same wire response (Table
+                        // 4-10 / Table 4-11); the mock returns the
+                        // stored fixture nonce + a §4.7-style MAC.
+                        self.last_binding_nonce_op = Some((
+                            rk.key_format,
+                            rk.lba_or_starting_offset,
+                            rk.block_count_function,
+                        ));
+                        let mac: [u8; BINDING_NONCE_MAC_LEN] = match &self.auth {
+                            Some(a) if a.bus_key.is_some() => {
+                                crate::aes::aes_128_cmac(&a.bus_key.unwrap(), &self.binding_nonce)
+                            }
+                            _ => self.binding_nonce_mac,
+                        };
+                        let mut out = Vec::with_capacity(36);
+                        out.extend_from_slice(&[0x00, 0x22, 0x00, 0x00]);
+                        out.extend_from_slice(&self.binding_nonce);
+                        out.extend_from_slice(&mac);
                         Ok(ScsiResponse::good(out))
                     }
                     KF_REPORT_AACS_INVALIDATE_AGID => {
@@ -1556,5 +1719,80 @@ mod tests {
         // the 4-byte header.
         let wire = [0x00, 0x66, 0x00, 0x01];
         assert!(parse_mkb_pack_response(&wire).is_err());
+    }
+
+    #[test]
+    fn binding_nonce_gen_cdb_encodes_lba_extent_per_4_14_2() {
+        // Generate variant: Key Format 0x20, AGID=2, starting LBA
+        // 0x01020304, block count 0x40. Bytes 2..5 must carry the LBA
+        // big-endian per AACS Common §4.14.2 (final paragraph) and
+        // byte 6 must carry the block count.
+        let rk = ReportKey::aacs_binding_nonce_gen(2, 0x0102_0304, 0x40);
+        let cdb = rk.cdb();
+        assert_eq!(cdb[0], REPORT_KEY_OPCODE);
+        assert_eq!(cdb[2], 0x01);
+        assert_eq!(cdb[3], 0x02);
+        assert_eq!(cdb[4], 0x03);
+        assert_eq!(cdb[5], 0x04);
+        assert_eq!(cdb[6], 0x40);
+        assert_eq!(cdb[7], KEY_CLASS_AACS);
+        // 36-byte allocation length = 0x0024.
+        assert_eq!(cdb[8], 0x00);
+        assert_eq!(cdb[9], 0x24);
+        // AGID=2 in bits 7..6, Key Format 0x20 in bits 5..0.
+        // (2 << 6) | 0x20 = 0xA0.
+        assert_eq!(cdb[10], 0xA0);
+        // Round-trip through parse_cdb preserves every field.
+        let parsed = ReportKey::parse_cdb(&cdb).unwrap();
+        assert_eq!(parsed, rk);
+        assert_eq!(parsed.key_format, KF_REPORT_AACS_BINDING_NONCE_GEN);
+        assert_eq!(parsed.lba_or_starting_offset, 0x0102_0304);
+        assert_eq!(parsed.block_count_function, 0x40);
+    }
+
+    #[test]
+    fn binding_nonce_read_cdb_uses_key_format_0x21() {
+        // Read variant: Key Format 0x21, AGID=3, starting LBA 0, block
+        // count 1.
+        let rk = ReportKey::aacs_binding_nonce_read(3, 0, 1);
+        let cdb = rk.cdb();
+        assert_eq!(cdb[7], KEY_CLASS_AACS);
+        // Same allocation length as the generate variant (Table 4-11
+        // is identical to Table 4-10).
+        assert_eq!(cdb[8], 0x00);
+        assert_eq!(cdb[9], 0x24);
+        // (3 << 6) | 0x21 = 0xE1.
+        assert_eq!(cdb[10], 0xE1);
+        assert_eq!(cdb[6], 0x01);
+        let parsed = ReportKey::parse_cdb(&cdb).unwrap();
+        assert_eq!(parsed.key_format, KF_REPORT_AACS_BINDING_NONCE_READ);
+    }
+
+    #[test]
+    fn binding_nonce_response_parser_round_trip() {
+        let nonce = [0xA5; BINDING_NONCE_LEN];
+        let mac = [0x5A; BINDING_NONCE_MAC_LEN];
+        let mut wire = Vec::with_capacity(36);
+        wire.extend_from_slice(&[0x00, 0x22, 0x00, 0x00]);
+        wire.extend_from_slice(&nonce);
+        wire.extend_from_slice(&mac);
+        let parsed = parse_report_key_binding_nonce(&wire).unwrap();
+        assert_eq!(parsed.binding_nonce, nonce);
+        assert_eq!(parsed.mac, mac);
+    }
+
+    #[test]
+    fn binding_nonce_parser_rejects_wrong_length_field() {
+        // Length field 0x0010 != 0x0022.
+        let mut wire = vec![0x00, 0x10, 0x00, 0x00];
+        wire.resize(36, 0);
+        assert!(parse_report_key_binding_nonce(&wire).is_err());
+    }
+
+    #[test]
+    fn binding_nonce_parser_rejects_truncated_payload() {
+        // Length field is correct but payload is short.
+        let wire = [0x00, 0x22, 0x00, 0x00, 0xAA, 0xBB];
+        assert!(parse_report_key_binding_nonce(&wire).is_err());
     }
 }
