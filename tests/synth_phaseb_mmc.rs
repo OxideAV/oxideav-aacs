@@ -270,8 +270,11 @@ fn read_disc_structure_media_id_roundtrip_through_mock_drive() {
 fn read_disc_structure_unknown_format_is_rejected() {
     let mut drive = MockDrive::with_test_fixture();
     let mut cdb = ReadDiscStructure::aacs_volume_id(0).cdb();
-    // Replace format byte with an undefined AACS Format Code.
-    cdb[7] = 0x84; // §4.14.3.5 Returning the Data Keys — not modelled.
+    // Replace format byte with a Format Code outside the AACS Common
+    // §4.14.3 range. Format 0x87 sits past the highest spec-defined
+    // AACS Format Code (0x86, CPRM MKB) and is the conventional
+    // "unknown to AACS" stand-in.
+    cdb[7] = 0x87;
     let err = drive
         .execute(&cdb, DataDirection::FromDevice, &[], 36)
         .unwrap_err();

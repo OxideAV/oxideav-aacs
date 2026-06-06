@@ -83,14 +83,14 @@ pub use crate::mkb::{
     Mkb, MkbType, RevocationEntry, RevocationSignatureBlock, SubsetDifferenceEntry,
 };
 pub use crate::mmc::{
-    build_send_key_host_cert_chal, build_send_key_host_key, parse_media_id_response,
-    parse_media_serial_response, parse_mkb_pack_response, parse_report_key_agid,
-    parse_report_key_binding_nonce, parse_report_key_drive_cert, parse_report_key_drive_cert_chal,
-    parse_report_key_drive_key, parse_send_key_host_cert_chal, parse_send_key_host_key,
-    parse_volume_id_response, AgidResponse, BindingNonceResponse, DataDirection,
-    DriveCertChallengeResponse, DriveCertResponse, DriveCommand, DriveKeyResponse,
-    MediaIdentifierResponse, MediaSerialNumberResponse, MkbPackResponse, MockDrive,
-    ReadDiscStructure, ReportKey, ScsiResponse, SendKey, VolumeIdResponse,
+    build_send_key_host_cert_chal, build_send_key_host_key, parse_data_keys_response,
+    parse_media_id_response, parse_media_serial_response, parse_mkb_pack_response,
+    parse_report_key_agid, parse_report_key_binding_nonce, parse_report_key_drive_cert,
+    parse_report_key_drive_cert_chal, parse_report_key_drive_key, parse_send_key_host_cert_chal,
+    parse_send_key_host_key, parse_volume_id_response, AgidResponse, BindingNonceResponse,
+    DataDirection, DataKeysResponse, DriveCertChallengeResponse, DriveCertResponse, DriveCommand,
+    DriveKeyResponse, MediaIdentifierResponse, MediaSerialNumberResponse, MkbPackResponse,
+    MockDrive, ReadDiscStructure, ReportKey, ScsiResponse, SendKey, VolumeIdResponse,
 };
 pub use crate::self_check::{
     aacs_la_pub_self_check, ake_ecdh_self_check, ake_full_self_check, all_self_checks,

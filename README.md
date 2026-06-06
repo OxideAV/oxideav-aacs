@@ -5,6 +5,35 @@ Content System) decryption layer used by Blu-ray Disc, per the
 publicly-published AACS LA technical specifications **Common Final
 0.953** (Oct 2012) and **BD-Prerecorded Final 0.953** (Oct 2012).
 
+Round 243 adds the **READ DISC STRUCTURE Format `0x84` (Data Keys)**
+sub-payload per AACS Common §4.14.3.5 Table 4-19 — the encrypted
+Read/Write Data Key pair the Bus Encryption layer (§4.11) uses to wrap
+sector payloads. Previous rounds covered Format `0x80` / `0x81` /
+`0x82` (IDs) and `0x83` (MKB packs); `0x84` brings the sub-payload
+list level with the §4.11 protocol that the existing `aes` + `ake`
+modules already implement.
+
+- **`ReadDiscStructure::aacs_data_keys(agid)`** — CDB constructor.
+  Media Type BD, allocation length 36, AGID in bits 7..6 of byte 10.
+- **`DataKeysResponse { read_data_key_encrypted: [u8; 16],
+  write_data_key_encrypted: [u8; 16] }`** +
+  **`parse_data_keys_response(buf)`** — decoded 36-byte wire layout
+  `[length:u16=0x0022][reserved:u16][Krd:16][Kwd:16]`.
+- **`DataKeysResponse::decrypt_read_data_key(bus_key)`** /
+  **`decrypt_write_data_key(bus_key)`** — host-side unwrap helpers
+  (AES-128D under the Bus Key) recovering plaintext `Krd` / `Kwd`.
+- **`FORMAT_AACS_DATA_KEYS`** = `0x84`, **`DATA_KEY_LEN`** = `16`.
+
+Both Data Keys are on the wire wrapped under the §4.3-derived Bus Key
+with AES-128E per §4.11 ("the Bus Key is used to protect the Data
+Keys using AES-128E"). `MockDrive` gains plaintext `read_data_key` /
+`write_data_key` slots and a `last_data_keys_read` capture flag; in
+`auth` mode the dispatcher wraps each key under the Bus Key before
+serialising the response, and in static mode the plaintext bytes go
+out verbatim. When the `auth` slot is set but the Bus Key has not yet
+been derived, the dispatcher returns the spec-mandated KEY NOT
+ESTABLISHED error path per §4.14.3.5's final paragraph.
+
 Round 240 adds the **REPORT KEY Binding Nonce** sub-payload pair
 (Key Format `0x20` / `0x21`) per AACS Common §4.14.2.4 Table 4-10
 and §4.14.2.5 Table 4-11. The two named constants

@@ -46,6 +46,7 @@
 //! | `parse_media_serial_response`            | Table 384            | 4.14.3.2, Table 4-16     |
 //! | `parse_media_id_response`                | Table 384            | 4.14.3.3, Table 4-17     |
 //! | `parse_mkb_pack_response`                | Table 384            | 4.14.3.4, Table 4-18     |
+//! | `parse_data_keys_response`               | Table 384            | 4.14.3.5, Table 4-19     |
 //!
 //! # Notes on the workspace `docs/container/aacs/mmc/README.md`
 //!
@@ -133,6 +134,10 @@ pub const FORMAT_AACS_MEDIA_ID: u8 = 0x82;
 /// READ DISC STRUCTURE Format Code `0x83`: AACS Media Key Block pack
 /// (MMC-6 §6.22.3.1.4, AACS Common §4.14.3.4).
 pub const FORMAT_AACS_MEDIA_KEY_BLOCK: u8 = 0x83;
+/// READ DISC STRUCTURE Format Code `0x84`: AACS Data Keys
+/// (Bus-Encryption Read/Write Data Keys, encrypted under the Bus Key
+/// using AES-128E per AACS Common §4.11). Spec §4.14.3.5 Table 4-19.
+pub const FORMAT_AACS_DATA_KEYS: u8 = 0x84;
 
 /// READ DISC STRUCTURE Media Type `0001b`: BD (MMC-6 Table 382).
 pub const MEDIA_TYPE_BD: u8 = 0x01;
@@ -174,6 +179,11 @@ pub const BINDING_NONCE_LEN: usize = 16;
 /// Binding Nonce in the REPORT KEY Key Format `0x20` / `0x21` response —
 /// AACS Common §4.14.2.4 Table 4-10 bytes 20..35.
 pub const BINDING_NONCE_MAC_LEN: usize = 16;
+/// 128-bit (16-byte) Read Data Key / Write Data Key payload length on
+/// the wire — AACS Common §4.14.3.5 Table 4-19 (bytes 4..19 carry the
+/// encrypted `Krd`, bytes 20..35 carry the encrypted `Kwd`). Each Data
+/// Key is wrapped under the Bus Key with AES-128E per §4.11.
+pub const DATA_KEY_LEN: usize = 16;
 
 // ---------------------------------------------------------------------
 // REPORT_KEY (0xA4) CDB
@@ -609,6 +619,30 @@ impl ReadDiscStructure {
         }
     }
 
+    /// Constructor for an AACS Data Keys read (Format `0x84`, AACS
+    /// Common §4.14.3.5 Table 4-19). Returns 36 bytes total — 4-byte
+    /// header (`length:u16=0x0022 || reserved:u16`) + 16-byte encrypted
+    /// Read Data Key (bytes 4..19) + 16-byte encrypted Write Data Key
+    /// (bytes 20..35). The two-byte length field value `0x0022` counts
+    /// bytes 2..35 (34 bytes) per the MMC-6 convention. Both Data Keys
+    /// are wrapped under the Bus Key established by the §4.3 AKE using
+    /// AES-128E (§4.11). This command requires the Bus-Key-established
+    /// state of the AACS authentication; otherwise the drive shall
+    /// terminate with COPY PROTECTION KEY EXCHANGE FAILURE – KEY NOT
+    /// ESTABLISHED (§4.14.3.5 final paragraph).
+    pub fn aacs_data_keys(agid: u8) -> Self {
+        Self {
+            media_type: MEDIA_TYPE_BD,
+            address: 0,
+            layer_number: 0,
+            format: FORMAT_AACS_DATA_KEYS,
+            // 4-byte header + 16-byte Krd + 16-byte Kwd = 36 bytes.
+            allocation_length: 36,
+            agid: agid & 0x03,
+            control: 0,
+        }
+    }
+
     /// Serialize this CDB into 12 bytes per MMC-6 Table 381.
     pub fn cdb(&self) -> [u8; MMC_CDB_LEN] {
         let mut cdb = [0u8; MMC_CDB_LEN];
@@ -771,6 +805,63 @@ pub struct MkbPackResponse {
     /// MKB pack data, up to 32,768 bytes. The last pack may end with
     /// zero-padding.
     pub pack_data: Vec<u8>,
+}
+
+/// Decoded AACS Data Keys response (MMC-6 Table 384; AACS Common
+/// §4.14.3.5 Table 4-19). 40 bytes on the wire — 4-byte header
+/// (`length:u16=0x0022 || reserved:u16`) + 16-byte encrypted Read
+/// Data Key (bytes 4..19) + 16-byte encrypted Write Data Key
+/// (bytes 20..35).
+///
+/// Both Data Keys are wrapped under the Bus Key established by the
+/// §4.3 AKE using AES-128E (§4.11 paragraph 4):
+///
+/// ```text
+///   wrapped_Krd = AES-128E(BK, Krd)
+///   wrapped_Kwd = AES-128E(BK, Kwd)
+/// ```
+///
+/// The host recovers each plaintext Data Key with AES-128D under the
+/// same Bus Key. The plaintext Read Data Key `Krd` is derived by the
+/// drive as `Krd = AES-128E(Sd, IDm)` from a confidential Drive Seed
+/// `Sd` and the Media Identifier (or Volume Identifier for
+/// pre-recorded media); the Write Data Key `Kwd` defaults to the
+/// same value but the host may overwrite it via SEND DISC STRUCTURE
+/// Format `0x84` (§4.14.5.1). Once recovered, the keys feed AES-128
+/// CBC bus-encryption / bus-decryption of sector payloads flagged
+/// for §4.11 protection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DataKeysResponse {
+    /// 128-bit Read Data Key in its on-the-wire AES-128E(`BK`, ·)
+    /// wrapped form. Use [`DataKeysResponse::decrypt_read_data_key`]
+    /// to recover the plaintext `Krd`.
+    pub read_data_key_encrypted: [u8; DATA_KEY_LEN],
+    /// 128-bit Write Data Key in its on-the-wire AES-128E(`BK`, ·)
+    /// wrapped form. The host shall ignore this field when the
+    /// logical unit is read-only or the current disc is read-only
+    /// (Table 4-19 paragraph 5). Use
+    /// [`DataKeysResponse::decrypt_write_data_key`] to recover the
+    /// plaintext `Kwd`.
+    pub write_data_key_encrypted: [u8; DATA_KEY_LEN],
+}
+
+impl DataKeysResponse {
+    /// Recover the plaintext Read Data Key `Krd` by applying AES-128D
+    /// under the Bus Key per AACS Common §4.11 ("the Bus Key is used
+    /// to protect the Data Keys using AES-128E"). The inverse of the
+    /// drive's wrap step.
+    pub fn decrypt_read_data_key(&self, bus_key: &[u8; 16]) -> [u8; DATA_KEY_LEN] {
+        crate::aes::aes_128_ecb_decrypt(bus_key, &self.read_data_key_encrypted)
+    }
+
+    /// Recover the plaintext Write Data Key `Kwd` by applying AES-128D
+    /// under the Bus Key per AACS Common §4.11. The drive sets `Kwd`
+    /// equal to `Krd` on disc insert / reset / power-on (§4.11
+    /// paragraph 6); the host may overwrite the drive's copy via
+    /// SEND DISC STRUCTURE Format `0x84` (§4.14.5.1).
+    pub fn decrypt_write_data_key(&self, bus_key: &[u8; 16]) -> [u8; DATA_KEY_LEN] {
+        crate::aes::aes_128_ecb_decrypt(bus_key, &self.write_data_key_encrypted)
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -964,6 +1055,37 @@ pub fn parse_report_key_binding_nonce(buf: &[u8]) -> Result<BindingNonceResponse
     let mut mac = [0u8; BINDING_NONCE_MAC_LEN];
     mac.copy_from_slice(&buf[20..20 + BINDING_NONCE_MAC_LEN]);
     Ok(BindingNonceResponse { binding_nonce, mac })
+}
+
+/// Parse the 40-byte response payload for `READ_DISC_STRUCTURE` Format
+/// `0x84` (AACS Data Keys) per MMC-6 Table 384 / AACS Common §4.14.3.5
+/// Table 4-19.
+///
+/// Wire layout: `[length:u16=0x0022][reserved:u16][Krd_enc:16][Kwd_enc:16]`.
+/// The two 128-bit Data Keys are wrapped under the Bus Key with
+/// AES-128E per §4.11; the caller recovers each plaintext key by
+/// applying AES-128D under the same Bus Key (see
+/// [`DataKeysResponse::decrypt_read_data_key`] /
+/// [`DataKeysResponse::decrypt_write_data_key`]).
+pub fn parse_data_keys_response(buf: &[u8]) -> Result<DataKeysResponse, AacsError> {
+    let length = read_u16_be(buf, "Data Keys response header")?;
+    if length != 0x0022 {
+        return Err(AacsError::InvalidValue {
+            what: "Data Keys response length",
+            value: length as u64,
+        });
+    }
+    if buf.len() < 36 {
+        return Err(AacsError::Truncated("Data Keys response payload"));
+    }
+    let mut read_data_key_encrypted = [0u8; DATA_KEY_LEN];
+    read_data_key_encrypted.copy_from_slice(&buf[4..4 + DATA_KEY_LEN]);
+    let mut write_data_key_encrypted = [0u8; DATA_KEY_LEN];
+    write_data_key_encrypted.copy_from_slice(&buf[20..20 + DATA_KEY_LEN]);
+    Ok(DataKeysResponse {
+        read_data_key_encrypted,
+        write_data_key_encrypted,
+    })
 }
 
 /// Parse the variable-length response payload for `READ_DISC_STRUCTURE`
@@ -1204,6 +1326,19 @@ pub struct MockDrive {
     /// §4.14.2 final paragraph. `None` until the host issues a Binding
     /// Nonce command.
     pub last_binding_nonce_op: Option<(u8, u32, u8)>,
+    /// Plaintext Read Data Key `Krd` (§4.11) the mock returns when the
+    /// host issues READ DISC STRUCTURE Format `0x84`. In `auth` mode
+    /// the mock wraps this value as `AES-128E(BK, Krd)` under the Bus
+    /// Key before sending; in static mode the bytes are returned
+    /// verbatim. (AACS Common §4.14.3.5 Table 4-19.)
+    pub read_data_key: [u8; DATA_KEY_LEN],
+    /// Plaintext Write Data Key `Kwd` (§4.11). Same treatment as
+    /// [`Self::read_data_key`] when responding to Format `0x84`.
+    pub write_data_key: [u8; DATA_KEY_LEN],
+    /// Set to `true` after a successful READ DISC STRUCTURE Format
+    /// `0x84` dispatch, so tests can assert the mock walked the §4.11
+    /// branch. Reset by [`Self::with_test_fixture`] / [`Default`].
+    pub last_data_keys_read: bool,
     /// SEND KEY Host Certificate Challenge payload captured from the
     /// last `aacs_host_cert_challenge` issued. `None` until the host
     /// pushes one.
@@ -1239,6 +1374,9 @@ impl Default for MockDrive {
             binding_nonce: [0u8; BINDING_NONCE_LEN],
             binding_nonce_mac: [0u8; BINDING_NONCE_MAC_LEN],
             last_binding_nonce_op: None,
+            read_data_key: [0u8; DATA_KEY_LEN],
+            write_data_key: [0u8; DATA_KEY_LEN],
+            last_data_keys_read: false,
             last_host_cert_chal: None,
             last_host_key: None,
             agid_invalidated: false,
@@ -1316,6 +1454,14 @@ impl MockDrive {
         for (i, b) in binding_nonce_mac.iter_mut().enumerate() {
             *b = 0x10 ^ (i as u8);
         }
+        let mut read_data_key = [0u8; DATA_KEY_LEN];
+        for (i, b) in read_data_key.iter_mut().enumerate() {
+            *b = 0x80 | (i as u8);
+        }
+        let mut write_data_key = [0u8; DATA_KEY_LEN];
+        for (i, b) in write_data_key.iter_mut().enumerate() {
+            *b = 0x90 | (i as u8);
+        }
         Self {
             agid_to_return: 1,
             drive_nonce,
@@ -1331,6 +1477,9 @@ impl MockDrive {
             binding_nonce,
             binding_nonce_mac,
             last_binding_nonce_op: None,
+            read_data_key,
+            write_data_key,
+            last_data_keys_read: false,
             last_host_cert_chal: None,
             last_host_key: None,
             agid_invalidated: false,
@@ -1525,6 +1674,42 @@ impl DriveCommand for MockDrive {
                         out.extend_from_slice(&[0x00, 0x22, 0x00, 0x00]);
                         out.extend_from_slice(&self.media_identifier);
                         out.extend_from_slice(&mac);
+                        Ok(ScsiResponse::good(out))
+                    }
+                    FORMAT_AACS_DATA_KEYS => {
+                        // §4.14.3.5 final paragraph: when the Bus Key is
+                        // not established, the drive shall terminate the
+                        // command with COPY PROTECTION KEY EXCHANGE
+                        // FAILURE – KEY NOT ESTABLISHED. In `auth` mode
+                        // we enforce this by requiring `bus_key`; in
+                        // static-fixture mode the response is returned
+                        // verbatim (callers that want the error path
+                        // arm `auth` without completing the AKE).
+                        let (krd_wrapped, kwd_wrapped) = match &self.auth {
+                            Some(a) if a.bus_key.is_some() => {
+                                let bk = a.bus_key.unwrap();
+                                // §4.11: wrap each Data Key under the
+                                // Bus Key with AES-128E.
+                                let krd = crate::aes::aes_128_ecb_encrypt(&bk, &self.read_data_key);
+                                let kwd =
+                                    crate::aes::aes_128_ecb_encrypt(&bk, &self.write_data_key);
+                                (krd, kwd)
+                            }
+                            Some(_) => {
+                                // Auth started but Bus Key not yet
+                                // derived: spec-mandated error path.
+                                return Err(AacsError::InvalidValue {
+                                    what: "READ_DISC_STRUCTURE Format 0x84 without Bus Key",
+                                    value: 0,
+                                });
+                            }
+                            None => (self.read_data_key, self.write_data_key),
+                        };
+                        self.last_data_keys_read = true;
+                        let mut out = Vec::with_capacity(36);
+                        out.extend_from_slice(&[0x00, 0x22, 0x00, 0x00]);
+                        out.extend_from_slice(&krd_wrapped);
+                        out.extend_from_slice(&kwd_wrapped);
                         Ok(ScsiResponse::good(out))
                     }
                     other => Err(AacsError::InvalidValue {
@@ -1794,5 +1979,92 @@ mod tests {
         // Length field is correct but payload is short.
         let wire = [0x00, 0x22, 0x00, 0x00, 0xAA, 0xBB];
         assert!(parse_report_key_binding_nonce(&wire).is_err());
+    }
+
+    #[test]
+    fn data_keys_cdb_uses_format_0x84() {
+        let rds = ReadDiscStructure::aacs_data_keys(2);
+        let cdb = rds.cdb();
+        assert_eq!(cdb[0], READ_DISC_STRUCTURE_OPCODE);
+        assert_eq!(cdb[1] & 0x0F, MEDIA_TYPE_BD);
+        assert_eq!(cdb[7], FORMAT_AACS_DATA_KEYS);
+        // 36-byte allocation length = 0x0024.
+        assert_eq!(cdb[8], 0x00);
+        assert_eq!(cdb[9], 0x24);
+        // AGID=2 occupies bits 7..6 of byte 10.
+        assert_eq!(cdb[10] >> 6, 2);
+        // Format `0x84` does not address an LBA / layer.
+        assert_eq!(cdb[2..6], [0u8; 4]);
+        assert_eq!(cdb[6], 0);
+
+        let parsed = ReadDiscStructure::parse_cdb(&cdb).unwrap();
+        assert_eq!(parsed, rds);
+    }
+
+    #[test]
+    fn data_keys_response_parser_round_trip() {
+        // Synthesize a Table 4-19 payload by hand:
+        // [length:0x0022][reserved:u16][Krd:16][Kwd:16] = 36 bytes.
+        let mut wire = vec![0x00, 0x22, 0x00, 0x00];
+        let krd = [0xA5u8; DATA_KEY_LEN];
+        let kwd = [0x5Au8; DATA_KEY_LEN];
+        wire.extend_from_slice(&krd);
+        wire.extend_from_slice(&kwd);
+        assert_eq!(wire.len(), 36);
+
+        let parsed = parse_data_keys_response(&wire).unwrap();
+        assert_eq!(parsed.read_data_key_encrypted, krd);
+        assert_eq!(parsed.write_data_key_encrypted, kwd);
+    }
+
+    #[test]
+    fn data_keys_parser_rejects_wrong_length_field() {
+        // Length field 0x0020 != 0x0022.
+        let mut wire = vec![0x00, 0x20, 0x00, 0x00];
+        wire.resize(36, 0);
+        assert!(parse_data_keys_response(&wire).is_err());
+    }
+
+    #[test]
+    fn data_keys_parser_rejects_truncated_payload() {
+        let wire = [0x00, 0x22, 0x00, 0x00, 0xAA, 0xBB];
+        assert!(parse_data_keys_response(&wire).is_err());
+    }
+
+    #[test]
+    fn data_keys_response_decrypts_under_bus_key() {
+        // Round-trip property: wrapping plaintext Krd / Kwd under a Bus
+        // Key with AES-128E and unwrapping with AES-128D recovers the
+        // plaintext bytes verbatim (AACS Common §2.1.1, §4.11).
+        let bus_key = [0x12u8; 16];
+        let krd_pt = [0x33u8; DATA_KEY_LEN];
+        let kwd_pt = [0x44u8; DATA_KEY_LEN];
+
+        let krd_enc = crate::aes::aes_128_ecb_encrypt(&bus_key, &krd_pt);
+        let kwd_enc = crate::aes::aes_128_ecb_encrypt(&bus_key, &kwd_pt);
+
+        let resp = DataKeysResponse {
+            read_data_key_encrypted: krd_enc,
+            write_data_key_encrypted: kwd_enc,
+        };
+        assert_eq!(resp.decrypt_read_data_key(&bus_key), krd_pt);
+        assert_eq!(resp.decrypt_write_data_key(&bus_key), kwd_pt);
+    }
+
+    #[test]
+    fn mock_drive_data_keys_format_static_mode_returns_plaintext_bytes() {
+        // Without `auth` set, the mock returns the plaintext Data Keys
+        // verbatim. Useful for byte-layout tests that do not want to
+        // pull in the AKE state.
+        let mut drive = MockDrive::with_test_fixture();
+        let rds = ReadDiscStructure::aacs_data_keys(1);
+        let cdb = rds.cdb();
+        let resp = drive
+            .execute(&cdb, DataDirection::FromDevice, &[], 36)
+            .unwrap();
+        let parsed = parse_data_keys_response(&resp.data).unwrap();
+        assert_eq!(parsed.read_data_key_encrypted, drive.read_data_key);
+        assert_eq!(parsed.write_data_key_encrypted, drive.write_data_key);
+        assert!(drive.last_data_keys_read);
     }
 }

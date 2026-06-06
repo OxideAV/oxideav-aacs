@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 243 READ DISC STRUCTURE Format `0x84` Data Keys
+  (Common §4.14.3.5 Table 4-19)
+
+The READ DISC STRUCTURE Format Code `0x84` sub-payload — the encrypted
+Read/Write Data Key pair the Bus Encryption layer (§4.11) uses to wrap
+sector payloads — is now exposed as a typed CDB constructor + response
+parser pair. Previous rounds covered Format Codes `0x80` / `0x81` / `0x82`
+(IDs) and `0x83` (MKB packs); `0x84` brings the sub-payload list level
+with the §4.11 protocol the surrounding `aes` + `ake` modules already
+implement.
+
+- **`ReadDiscStructure::aacs_data_keys(agid)`** — CDB constructor for
+  Format `0x84`. Media Type BD, allocation length 36 (= 4-byte header
+  + 16-byte Read Data Key + 16-byte Write Data Key), AGID in bits
+  7..6 of byte 10; bytes 2..6 reserved per the §4.14.3.5 table.
+- **`DataKeysResponse { read_data_key_encrypted: [u8; 16],
+  write_data_key_encrypted: [u8; 16] }`** — decoded 36-byte wire
+  layout `[length:u16=0x0022][reserved:u16][Krd:16][Kwd:16]` per
+  Table 4-19. Both Data Keys are on the wire wrapped under the Bus
+  Key with AES-128E per §4.11.
+- **`DataKeysResponse::decrypt_read_data_key(bus_key)`** /
+  **`decrypt_write_data_key(bus_key)`** — host-side unwrap helpers
+  (AES-128D under the same Bus Key) recovering plaintext `Krd` /
+  `Kwd`.
+- **`parse_data_keys_response(buf)`** — wire-layout parser; rejects
+  buffers whose length field is not `0x0022` and truncated payloads.
+- **`FORMAT_AACS_DATA_KEYS`** = `0x84` and **`DATA_KEY_LEN`** = `16` —
+  named constants for the new Format Code and key-field width.
+
+`MockDrive` gains `read_data_key: [u8; 16]` / `write_data_key: [u8;
+16]` plaintext slots and a `last_data_keys_read: bool` capture flag so
+tests can assert the §4.14.3.5 branch ran. In `auth` mode the mock
+wraps each Data Key with `aes_128_ecb_encrypt(bus_key, key)` per §4.11
+("the Bus Key is used to protect the Data Keys using AES-128E") before
+serialising the response; in static-fixture mode the plaintext bytes
+go out verbatim, mirroring the existing Volume-ID / PMSN / Media-ID
+behaviour. When the `auth` slot is set but the Bus Key has not yet
+been derived, the dispatcher returns the spec-mandated
+KEY-NOT-ESTABLISHED error path (§4.14.3.5 final paragraph), surfaced
+as `AacsError::InvalidValue { what: "READ_DISC_STRUCTURE Format 0x84
+without Bus Key", … }`.
+
+Companion test suite `tests/synth_round243_data_keys.rs` (9 cases)
+covers end-to-end round-trip through `MockDrive` in both static and
+synthetic-Bus-Key modes, pins the CDB byte layout (Format byte 0x84,
+allocation length 0x0024, AGID packing, zero Reserved/Address), pins
+the response wire layout (length field `0x0022`, 36-byte total, Krd
+at bytes 4..19 and Kwd at bytes 20..35), pins the AES-128E ↔
+AES-128D wrap/unwrap round-trip property, and rejects malformed
+inputs (wrong length field, truncated payload). Six additional unit
+tests live in `src/mmc.rs` alongside the existing CDB-layout cases.
+
+The previous `read_disc_structure_unknown_format_is_rejected` test
+case (which had used `0x84` as a placeholder "not modelled" Format
+Code) moves to `0x87` so the rejection diagnostic still surfaces from
+the dispatcher's catch-all arm.
+
 ### Added — Round 240 REPORT KEY Binding Nonce sub-payloads
   (Common §4.14.2.4 Table 4-10 / §4.14.2.5 Table 4-11)
 
