@@ -47,6 +47,7 @@
 //! | `parse_media_id_response`                | Table 384            | 4.14.3.3, Table 4-17     |
 //! | `parse_mkb_pack_response`                | Table 384            | 4.14.3.4, Table 4-18     |
 //! | `parse_data_keys_response`               | Table 384            | 4.14.3.5, Table 4-19     |
+//! | `parse_bus_encryption_sector_extents_response` | Table 389       | 4.14.3.6, Table 4-20     |
 //!
 //! # Notes on the workspace `docs/container/aacs/mmc/README.md`
 //!
@@ -138,6 +139,11 @@ pub const FORMAT_AACS_MEDIA_KEY_BLOCK: u8 = 0x83;
 /// (Bus-Encryption Read/Write Data Keys, encrypted under the Bus Key
 /// using AES-128E per AACS Common §4.11). Spec §4.14.3.5 Table 4-19.
 pub const FORMAT_AACS_DATA_KEYS: u8 = 0x84;
+/// READ DISC STRUCTURE Format Code `0x85`: AACS Bus-Encryption Sector
+/// Extents (the LBA-Extent table that flags which sectors are subject
+/// to §4.11 Bus Encryption). MMC-6 §6.22.3.1.6 Table 389; AACS Common
+/// §4.14.3.6 Table 4-20. Does **not** require AACS authentication.
+pub const FORMAT_AACS_BUS_ENCRYPTION_SECTOR_EXTENTS: u8 = 0x85;
 
 /// READ DISC STRUCTURE Media Type `0001b`: BD (MMC-6 Table 382).
 pub const MEDIA_TYPE_BD: u8 = 0x01;
@@ -184,6 +190,12 @@ pub const BINDING_NONCE_MAC_LEN: usize = 16;
 /// encrypted `Krd`, bytes 20..35 carry the encrypted `Kwd`). Each Data
 /// Key is wrapped under the Bus Key with AES-128E per §4.11.
 pub const DATA_KEY_LEN: usize = 16;
+/// 16-byte stride of one Bus-Encryption Sector Extent record on the
+/// READ DISC STRUCTURE Format `0x85` wire layout — AACS Common
+/// §4.14.3.6 Table 4-20. Each record is `[Reserved:8 || Start LBA:4 ||
+/// LBA Count:4]`, with the eight Reserved bytes preceding the
+/// 4+4 LBA pair (bytes 4..11 / 4+n*16..11+n*16 in the table).
+pub const BUS_ENCRYPTION_SECTOR_EXTENT_LEN: usize = 16;
 
 // ---------------------------------------------------------------------
 // REPORT_KEY (0xA4) CDB
@@ -546,6 +558,9 @@ pub struct ReadDiscStructure {
     pub allocation_length: u16,
     /// AGID (high 2 bits of byte 10). Used when Format is one of
     /// `0x02/0x06/0x07/0x80/0x81/0x82/0x84/0x86` and Address is 0.
+    /// Format `0x85` (Bus-Encryption Sector Extents) does not require
+    /// authentication — the field is encoded but the drive ignores it
+    /// per MMC-6 §6.22.2.7.
     pub agid: u8,
     /// SAM-3 control byte — typically `0x00`.
     pub control: u8,
@@ -639,6 +654,34 @@ impl ReadDiscStructure {
             // 4-byte header + 16-byte Krd + 16-byte Kwd = 36 bytes.
             allocation_length: 36,
             agid: agid & 0x03,
+            control: 0,
+        }
+    }
+
+    /// Constructor for an AACS Bus-Encryption Sector Extents read
+    /// (Format `0x85`, AACS Common §4.14.3.6 Table 4-20 / MMC-6
+    /// §6.22.3.1.6 Table 389). The drive returns
+    /// `[length:u16][reserved:u8][maximum:u8][reserved:8]` followed by
+    /// `N` 16-byte LBA-Extent records, where `N` is the count of
+    /// currently-defined Bus-Encryption Sector Extents. The Data Length
+    /// field encodes `N*16 + 2`; an empty table yields length `2` and
+    /// zero records (§4.14.3.6 paragraph 2). This Format Code does not
+    /// require AACS authentication (§4.14.3.6 final sentence) — the
+    /// AGID field is reserved per MMC-6 §6.22.2.7.
+    ///
+    /// `allocation_length` is sized for the worst case of 256 extents
+    /// (the spec maximum the field can encode per Table 4-20): 12 bytes
+    /// of header + reserved + 256 * 16-byte records = 4108 bytes.
+    /// Callers issuing the command against a known smaller bound may
+    /// shrink `allocation_length` after constructing the CDB.
+    pub fn aacs_bus_encryption_sector_extents() -> Self {
+        Self {
+            media_type: MEDIA_TYPE_BD,
+            address: 0,
+            layer_number: 0,
+            format: FORMAT_AACS_BUS_ENCRYPTION_SECTOR_EXTENTS,
+            allocation_length: 12 + 256 * BUS_ENCRYPTION_SECTOR_EXTENT_LEN as u16,
+            agid: 0,
             control: 0,
         }
     }
@@ -864,6 +907,63 @@ impl DataKeysResponse {
     }
 }
 
+/// One Bus-Encryption Sector Extent — a contiguous LBA range whose
+/// sectors are flagged for §4.11 Bus Encryption.
+///
+/// `start_lba` is the first logical block of the extent and `lba_count`
+/// is the number of consecutive blocks the extent covers, both 32-bit
+/// big-endian fields on the wire (AACS Common §4.14.3.6 Table 4-20:
+/// "Start LBA" at bytes 12+n*16..15+n*16; "LBA Count" at
+/// 16+n*16..19+n*16). Per §4.14.3.6 paragraph 3 the extents are sorted
+/// by `start_lba` ascending and shall not overlap; the parser preserves
+/// the on-wire order verbatim and does not enforce the sort/no-overlap
+/// invariant (the SEND DISC STRUCTURE Format `0x85` ingest path is
+/// where the logical unit rejects malformed tables per §4.14.5.x).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BusEncryptionSectorExtent {
+    /// First LBA of the extent. 32-bit big-endian on the wire.
+    pub start_lba: u32,
+    /// Number of consecutive sectors the extent covers. 32-bit
+    /// big-endian on the wire.
+    pub lba_count: u32,
+}
+
+/// Decoded AACS Bus-Encryption Sector Extents response (READ DISC
+/// STRUCTURE Format `0x85`; MMC-6 Table 389 / AACS Common Table 4-20).
+///
+/// Wire layout (per Table 4-20):
+///
+/// ```text
+///  Byte  | Field
+///  0..1  | DISC STRUCTURE Data Length (= N*16 + 2)
+///  2     | Reserved
+///  3     | Maximum Number of Bus-Encryption Sector Extents (1..256;
+///        | the value 0 denotes 256)
+///  4..11 | Reserved
+/// 12..15 | Start LBA, extent 0
+/// 16..19 | LBA Count, extent 0
+///  ...   | …
+/// 4+n*16..11+n*16 | Reserved
+/// 12+n*16..15+n*16 | Start LBA, extent n
+/// 16+n*16..19+n*16 | LBA Count, extent n
+/// ```
+///
+/// where `n = N - 1`. When `N = 0` the Data Length field equals `2`
+/// and no extent records follow (§4.14.3.6 paragraph 2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BusEncryptionSectorExtentsResponse {
+    /// Maximum number of Bus-Encryption Sector Extents the logical
+    /// unit can store at one time. Always in the range `1..=256`;
+    /// the on-wire encoding represents `256` as the byte value `0`
+    /// (§4.14.3.6 paragraph 3 final sentence). This field is decoded
+    /// to its semantic value, so `256` is returned literally here even
+    /// when the wire byte was `0`.
+    pub maximum: u16,
+    /// The currently-defined Bus-Encryption Sector Extents, in wire
+    /// order (sorted by `start_lba` ascending per §4.14.3.6 paragraph 3).
+    pub extents: Vec<BusEncryptionSectorExtent>,
+}
+
 // ---------------------------------------------------------------------
 // Response parsers
 // ---------------------------------------------------------------------
@@ -1086,6 +1186,85 @@ pub fn parse_data_keys_response(buf: &[u8]) -> Result<DataKeysResponse, AacsErro
         read_data_key_encrypted,
         write_data_key_encrypted,
     })
+}
+
+/// Parse the variable-length response payload for `READ_DISC_STRUCTURE`
+/// Format `0x85` (AACS Bus-Encryption Sector Extents) per MMC-6 Table
+/// 389 / AACS Common §4.14.3.6 Table 4-20.
+///
+/// Wire layout: `[length:u16][reserved:u8][maximum:u8][reserved:8]`
+/// followed by `N` Bus-Encryption Sector Extent records of 16 bytes
+/// each, where the `length` field equals `N * 16 + 2`. Each extent
+/// record is `[reserved:8 || Start LBA:u32 || LBA Count:u32]`.
+///
+/// Returns the decoded maximum (`0` on the wire → `256` per the
+/// §4.14.3.6 paragraph 3 sentinel; otherwise the literal byte value)
+/// and the `Vec` of extents in wire order.
+///
+/// Errors:
+/// * `AacsError::Truncated` — the buffer is shorter than the 4-byte
+///   header, or shorter than `2 + length` bytes total (the length
+///   field counts everything after itself), or `(length - 2)` is not a
+///   multiple of 16 — a malformed table per the §4.14.3.6 Table 4-20
+///   stride.
+/// * `AacsError::InvalidValue` — the length field is below the
+///   spec-mandated minimum of `2` (which would not even cover the
+///   Reserved + Maximum + Reserved trailer).
+pub fn parse_bus_encryption_sector_extents_response(
+    buf: &[u8],
+) -> Result<BusEncryptionSectorExtentsResponse, AacsError> {
+    let length = read_u16_be(buf, "Bus-Encryption Sector Extents response header")? as usize;
+    // Per §4.14.3.6 the length field equals `N * 16 + 2`, where `N` is
+    // the number of currently-defined Bus-Encryption Sector Extents.
+    // The `+2` accounts for the Reserved + Maximum trailer at bytes
+    // 2..3; the `N * 16` segment accounts for the `N` extent records
+    // that start at byte 4 with their leading 8-byte Reserved field.
+    // The minimum legal value is `2` (an empty table; §4.14.3.6
+    // paragraph 2: "If no Bus-Encryption Sector Extents are currently
+    // defined, the Data Length field shall be 2.").
+    if length < 2 {
+        return Err(AacsError::InvalidValue {
+            what: "Bus-Encryption Sector Extents response length",
+            value: length as u64,
+        });
+    }
+    if buf.len() < 2 + length {
+        return Err(AacsError::Truncated(
+            "Bus-Encryption Sector Extents response payload",
+        ));
+    }
+    let extent_section_len = length - 2;
+    if extent_section_len % BUS_ENCRYPTION_SECTOR_EXTENT_LEN != 0 {
+        return Err(AacsError::Truncated(
+            "Bus-Encryption Sector Extents response extent record stride",
+        ));
+    }
+    // Byte 3 carries the maximum; the on-wire value 0 denotes 256 per
+    // §4.14.3.6 paragraph 3.
+    let wire_max = buf[3];
+    let maximum = if wire_max == 0 { 256 } else { wire_max as u16 };
+    let extent_count = extent_section_len / BUS_ENCRYPTION_SECTOR_EXTENT_LEN;
+    let mut extents = Vec::with_capacity(extent_count);
+    // Extent records start at byte 4 with their 8-byte Reserved field.
+    // For record `i`: bytes 4+i*16..11+i*16 Reserved; bytes
+    // 12+i*16..15+i*16 Start LBA (u32 big-endian); bytes
+    // 16+i*16..19+i*16 LBA Count (u32 big-endian).
+    for i in 0..extent_count {
+        let base = 4 + i * BUS_ENCRYPTION_SECTOR_EXTENT_LEN;
+        let start_lba = ((buf[base + 8] as u32) << 24)
+            | ((buf[base + 9] as u32) << 16)
+            | ((buf[base + 10] as u32) << 8)
+            | (buf[base + 11] as u32);
+        let lba_count = ((buf[base + 12] as u32) << 24)
+            | ((buf[base + 13] as u32) << 16)
+            | ((buf[base + 14] as u32) << 8)
+            | (buf[base + 15] as u32);
+        extents.push(BusEncryptionSectorExtent {
+            start_lba,
+            lba_count,
+        });
+    }
+    Ok(BusEncryptionSectorExtentsResponse { maximum, extents })
 }
 
 /// Parse the variable-length response payload for `READ_DISC_STRUCTURE`
@@ -1339,6 +1518,20 @@ pub struct MockDrive {
     /// `0x84` dispatch, so tests can assert the mock walked the §4.11
     /// branch. Reset by [`Self::with_test_fixture`] / [`Default`].
     pub last_data_keys_read: bool,
+    /// Maximum number of Bus-Encryption Sector Extents the synthetic
+    /// logical unit advertises in response to READ DISC STRUCTURE
+    /// Format `0x85` (§4.14.3.6 Table 4-20 byte 3). Set to a value in
+    /// `1..=256`; the dispatcher encodes `256` as the on-wire byte
+    /// value `0` per the §4.14.3.6 paragraph 3 sentinel. `Default`
+    /// initialises this to `1`.
+    pub max_bus_encryption_sector_extents: u16,
+    /// The currently-defined Bus-Encryption Sector Extents the mock
+    /// returns for Format `0x85`. Stored in wire order (sorted by
+    /// `start_lba` ascending per §4.14.3.6 paragraph 3); the
+    /// dispatcher does not re-sort. The list may be empty, in which
+    /// case the on-wire Data Length is `2` and no extent records are
+    /// emitted.
+    pub bus_encryption_sector_extents: Vec<BusEncryptionSectorExtent>,
     /// SEND KEY Host Certificate Challenge payload captured from the
     /// last `aacs_host_cert_challenge` issued. `None` until the host
     /// pushes one.
@@ -1377,6 +1570,8 @@ impl Default for MockDrive {
             read_data_key: [0u8; DATA_KEY_LEN],
             write_data_key: [0u8; DATA_KEY_LEN],
             last_data_keys_read: false,
+            max_bus_encryption_sector_extents: 1,
+            bus_encryption_sector_extents: Vec::new(),
             last_host_cert_chal: None,
             last_host_key: None,
             agid_invalidated: false,
@@ -1480,6 +1675,21 @@ impl MockDrive {
             read_data_key,
             write_data_key,
             last_data_keys_read: false,
+            // Deterministic fixture: advertise capacity for 4 extents
+            // and pre-populate two non-overlapping extents in wire
+            // order. Each extent value is patterned so any byte-order
+            // slip in the parser surfaces as an obvious diff.
+            max_bus_encryption_sector_extents: 4,
+            bus_encryption_sector_extents: vec![
+                BusEncryptionSectorExtent {
+                    start_lba: 0x0001_0000,
+                    lba_count: 0x0000_2000,
+                },
+                BusEncryptionSectorExtent {
+                    start_lba: 0x0080_0000,
+                    lba_count: 0x0000_4000,
+                },
+            ],
             last_host_cert_chal: None,
             last_host_key: None,
             agid_invalidated: false,
@@ -1710,6 +1920,48 @@ impl DriveCommand for MockDrive {
                         out.extend_from_slice(&[0x00, 0x22, 0x00, 0x00]);
                         out.extend_from_slice(&krd_wrapped);
                         out.extend_from_slice(&kwd_wrapped);
+                        Ok(ScsiResponse::good(out))
+                    }
+                    FORMAT_AACS_BUS_ENCRYPTION_SECTOR_EXTENTS => {
+                        // §4.14.3.6 Table 4-20: length = N*16 + 2;
+                        // byte 2 Reserved, byte 3 Maximum (0 ⇒ 256);
+                        // each extent record is 16 bytes
+                        // `[reserved:8 || Start LBA:u32 || LBA Count:u32]`.
+                        // Does **not** require AACS authentication.
+                        let extent_count = self.bus_encryption_sector_extents.len();
+                        let length = (extent_count * BUS_ENCRYPTION_SECTOR_EXTENT_LEN) + 2;
+                        let mut out = Vec::with_capacity(2 + length);
+                        out.push((length >> 8) as u8);
+                        out.push(length as u8);
+                        // Byte 2: Reserved.
+                        out.push(0);
+                        // Byte 3: encode 256 as the sentinel byte 0,
+                        // else the literal byte value. Clamp to the
+                        // u8 range; values outside 1..=256 are a
+                        // construction error caught by debug_assert.
+                        debug_assert!(
+                            (1..=256).contains(&self.max_bus_encryption_sector_extents),
+                            "Maximum Number of Bus-Encryption Sector Extents must be 1..=256"
+                        );
+                        let wire_max = if self.max_bus_encryption_sector_extents == 256 {
+                            0u8
+                        } else {
+                            self.max_bus_encryption_sector_extents as u8
+                        };
+                        out.push(wire_max);
+                        for extent in &self.bus_encryption_sector_extents {
+                            // 8-byte Reserved leader (bytes 4..11 of
+                            // the record).
+                            out.extend_from_slice(&[0u8; 8]);
+                            out.push((extent.start_lba >> 24) as u8);
+                            out.push((extent.start_lba >> 16) as u8);
+                            out.push((extent.start_lba >> 8) as u8);
+                            out.push(extent.start_lba as u8);
+                            out.push((extent.lba_count >> 24) as u8);
+                            out.push((extent.lba_count >> 16) as u8);
+                            out.push((extent.lba_count >> 8) as u8);
+                            out.push(extent.lba_count as u8);
+                        }
                         Ok(ScsiResponse::good(out))
                     }
                     other => Err(AacsError::InvalidValue {
@@ -2049,6 +2301,146 @@ mod tests {
         };
         assert_eq!(resp.decrypt_read_data_key(&bus_key), krd_pt);
         assert_eq!(resp.decrypt_write_data_key(&bus_key), kwd_pt);
+    }
+
+    #[test]
+    fn bus_encryption_sector_extents_cdb_uses_format_0x85() {
+        let rds = ReadDiscStructure::aacs_bus_encryption_sector_extents();
+        let cdb = rds.cdb();
+        assert_eq!(cdb[0], READ_DISC_STRUCTURE_OPCODE);
+        assert_eq!(cdb[1] & 0x0F, MEDIA_TYPE_BD);
+        assert_eq!(cdb[7], FORMAT_AACS_BUS_ENCRYPTION_SECTOR_EXTENTS);
+        // Allocation length = 12 + 256*16 = 4108 = 0x100C.
+        assert_eq!(cdb[8], 0x10);
+        assert_eq!(cdb[9], 0x0C);
+        // §4.14.3.6: no AGID required; bits 7..6 of byte 10 left zero.
+        assert_eq!(cdb[10], 0x00);
+        // Address (bytes 2..5) and Layer Number (byte 6) reserved.
+        assert_eq!(cdb[2..6], [0u8; 4]);
+        assert_eq!(cdb[6], 0);
+        let parsed = ReadDiscStructure::parse_cdb(&cdb).unwrap();
+        assert_eq!(parsed, rds);
+    }
+
+    #[test]
+    fn bus_encryption_sector_extents_empty_table_round_trip() {
+        // §4.14.3.6 paragraph 2: empty table ⇒ Data Length = 2.
+        let wire = [0x00, 0x02, 0x00, 0x40];
+        let parsed = parse_bus_encryption_sector_extents_response(&wire).unwrap();
+        assert_eq!(parsed.maximum, 0x40);
+        assert!(parsed.extents.is_empty());
+    }
+
+    #[test]
+    fn bus_encryption_sector_extents_two_extents_round_trip() {
+        // length = 2*16 + 2 = 34 = 0x0022. Maximum = 4.
+        // Extent 0: Start LBA = 0x0000_0100, LBA Count = 0x0000_0080.
+        // Extent 1: Start LBA = 0x0000_1000, LBA Count = 0x0000_0040.
+        let mut wire = vec![0x00, 0x22, 0x00, 0x04];
+        // Extent 0 record (bytes 4..19): 8 Reserved + Start LBA + Count.
+        wire.extend_from_slice(&[0u8; 8]);
+        wire.extend_from_slice(&[0x00, 0x00, 0x01, 0x00]);
+        wire.extend_from_slice(&[0x00, 0x00, 0x00, 0x80]);
+        // Extent 1 record (bytes 20..35).
+        wire.extend_from_slice(&[0u8; 8]);
+        wire.extend_from_slice(&[0x00, 0x00, 0x10, 0x00]);
+        wire.extend_from_slice(&[0x00, 0x00, 0x00, 0x40]);
+        assert_eq!(wire.len(), 36);
+        let parsed = parse_bus_encryption_sector_extents_response(&wire).unwrap();
+        assert_eq!(parsed.maximum, 4);
+        assert_eq!(parsed.extents.len(), 2);
+        assert_eq!(parsed.extents[0].start_lba, 0x0000_0100);
+        assert_eq!(parsed.extents[0].lba_count, 0x0000_0080);
+        assert_eq!(parsed.extents[1].start_lba, 0x0000_1000);
+        assert_eq!(parsed.extents[1].lba_count, 0x0000_0040);
+    }
+
+    #[test]
+    fn bus_encryption_sector_extents_maximum_zero_decodes_as_256() {
+        // §4.14.3.6 paragraph 3: the on-wire value 0 denotes 256.
+        let wire = [0x00, 0x02, 0x00, 0x00];
+        let parsed = parse_bus_encryption_sector_extents_response(&wire).unwrap();
+        assert_eq!(parsed.maximum, 256);
+        assert!(parsed.extents.is_empty());
+    }
+
+    #[test]
+    fn bus_encryption_sector_extents_parser_rejects_misaligned_stride() {
+        // length = 17 → (17 - 2) = 15 bytes for extents; 15 is not a
+        // multiple of 16, so the parser rejects.
+        let mut wire = vec![0x00, 0x11, 0x00, 0x01];
+        wire.resize(2 + 17, 0);
+        assert!(parse_bus_encryption_sector_extents_response(&wire).is_err());
+    }
+
+    #[test]
+    fn bus_encryption_sector_extents_parser_rejects_truncated_payload() {
+        // Claims length 0x0022 (one extent + trailer), but the buffer
+        // is much shorter.
+        let wire = [0x00, 0x22, 0x00, 0x01, 0xAA, 0xBB];
+        assert!(parse_bus_encryption_sector_extents_response(&wire).is_err());
+    }
+
+    #[test]
+    fn bus_encryption_sector_extents_parser_rejects_truncated_header() {
+        // Single byte: cannot even read the length field.
+        let wire = [0x00];
+        assert!(parse_bus_encryption_sector_extents_response(&wire).is_err());
+    }
+
+    #[test]
+    fn mock_drive_bus_encryption_sector_extents_round_trip() {
+        let mut drive = MockDrive::with_test_fixture();
+        let cdb = ReadDiscStructure::aacs_bus_encryption_sector_extents().cdb();
+        let response = drive
+            .execute(&cdb, DataDirection::FromDevice, &[], 4108)
+            .unwrap();
+        assert_eq!(response.status, 0x00);
+        // length = 2 + 2 * 16 = 34 = 0x0022.
+        assert_eq!(response.data[0], 0x00);
+        assert_eq!(response.data[1], 0x22);
+        // byte 2 Reserved, byte 3 Maximum (fixture = 4).
+        assert_eq!(response.data[2], 0x00);
+        assert_eq!(response.data[3], 0x04);
+        let parsed = parse_bus_encryption_sector_extents_response(&response.data).unwrap();
+        assert_eq!(parsed.maximum, 4);
+        assert_eq!(parsed.extents, drive.bus_encryption_sector_extents);
+    }
+
+    #[test]
+    fn mock_drive_bus_encryption_sector_extents_empty_table_encodes_length_2() {
+        // Empty extent list → Data Length field shall be 2 per
+        // §4.14.3.6 paragraph 2.
+        let mut drive = MockDrive::with_test_fixture();
+        drive.bus_encryption_sector_extents.clear();
+        drive.max_bus_encryption_sector_extents = 7;
+        let cdb = ReadDiscStructure::aacs_bus_encryption_sector_extents().cdb();
+        let response = drive
+            .execute(&cdb, DataDirection::FromDevice, &[], 4108)
+            .unwrap();
+        assert_eq!(response.data[0], 0x00);
+        assert_eq!(response.data[1], 0x02);
+        assert_eq!(response.data[2], 0x00);
+        assert_eq!(response.data[3], 0x07);
+        assert_eq!(response.data.len(), 4);
+        let parsed = parse_bus_encryption_sector_extents_response(&response.data).unwrap();
+        assert_eq!(parsed.maximum, 7);
+        assert!(parsed.extents.is_empty());
+    }
+
+    #[test]
+    fn mock_drive_bus_encryption_sector_extents_max_256_encodes_as_zero() {
+        let mut drive = MockDrive::with_test_fixture();
+        drive.bus_encryption_sector_extents.clear();
+        drive.max_bus_encryption_sector_extents = 256;
+        let cdb = ReadDiscStructure::aacs_bus_encryption_sector_extents().cdb();
+        let response = drive
+            .execute(&cdb, DataDirection::FromDevice, &[], 4108)
+            .unwrap();
+        // Wire-level sentinel: 256 → byte 0x00 per §4.14.3.6.
+        assert_eq!(response.data[3], 0x00);
+        let parsed = parse_bus_encryption_sector_extents_response(&response.data).unwrap();
+        assert_eq!(parsed.maximum, 256);
     }
 
     #[test]

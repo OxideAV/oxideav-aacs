@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 246 READ DISC STRUCTURE Format `0x85` Bus-Encryption
+  Sector Extents (Common §4.14.3.6 Table 4-20 / MMC-6 §6.22.3.1.6 Table 389)
+
+The READ DISC STRUCTURE Format Code `0x85` sub-payload — the
+variable-length LBA-Extent table the logical unit publishes so the host
+can discover which sector ranges are subject to §4.11 Bus Encryption —
+is now exposed as a typed CDB constructor + response parser pair.
+Previous rounds covered Format Codes `0x80` / `0x81` / `0x82` (IDs),
+`0x83` (MKB packs), and `0x84` (Data Keys); `0x85` closes the
+sub-payload list at the no-authentication entry the spec permits
+without the §4.3 AKE (§4.14.3.6 final sentence: "This command does not
+require AACS authentication.").
+
+- **`ReadDiscStructure::aacs_bus_encryption_sector_extents()`** — CDB
+  constructor for Format `0x85`. Media Type BD, AGID reserved (no
+  AACS authentication required), Address + Layer reserved, allocation
+  length sized for the worst-case 256-extent response (12 + 256 * 16
+  = 4108 bytes; callers issuing the command against a known smaller
+  bound may shrink `allocation_length` after constructing the CDB).
+- **`BusEncryptionSectorExtent { start_lba: u32, lba_count: u32 }`** —
+  one LBA range. Both fields are 32-bit big-endian on the wire (bytes
+  12+n*16..15+n*16 and 16+n*16..19+n*16 of Table 4-20).
+- **`BusEncryptionSectorExtentsResponse { maximum: u16, extents:
+  Vec<BusEncryptionSectorExtent> }`** — decoded variable-length wire
+  layout `[length:u16 = N*16 + 2][reserved:u8][maximum:u8]` followed
+  by `N` 16-byte extent records `[reserved:8 || Start LBA:4 || LBA
+  Count:4]`. The `maximum` field spans `1..=256`; the on-wire encoding
+  represents `256` as the byte value `0` per the §4.14.3.6 paragraph 3
+  sentinel ("The value 256 is denoted by a '0' in the field.").
+- **`parse_bus_encryption_sector_extents_response(buf)`** — wire-layout
+  parser. Decodes the `0` → `256` sentinel back to its semantic value;
+  preserves the on-wire extent order verbatim (per §4.14.3.6 paragraph
+  3 the extents are sorted by `start_lba` ascending and non-overlapping,
+  but the parser does not enforce the invariant — the SEND DISC
+  STRUCTURE Format `0x85` ingest path is where the logical unit
+  rejects malformed tables per §4.14.5.x). Rejects buffers whose
+  length field is below `2`, buffers shorter than `2 + length`, and
+  extent sections whose byte count is not a multiple of 16.
+- **`FORMAT_AACS_BUS_ENCRYPTION_SECTOR_EXTENTS`** = `0x85` and
+  **`BUS_ENCRYPTION_SECTOR_EXTENT_LEN`** = `16` — named constants for
+  the new Format Code and the per-record wire stride.
+
+`MockDrive` gains `bus_encryption_sector_extents:
+Vec<BusEncryptionSectorExtent>` + `max_bus_encryption_sector_extents:
+u16` slots and a Format `0x85` dispatcher arm that serialises the
+table verbatim. The default `with_test_fixture` constructor pre-loads
+two non-overlapping extents in ascending Start LBA order (matching the
+§4.14.3.6 paragraph 3 sort rule) so the round-trip test surfaces any
+byte-order or stride drift; `Default` initialises an empty extent list
+with a `maximum` of `1`. The empty-table path emits a 4-byte response
+(`length = 2`) per §4.14.3.6 paragraph 2 ("If no Bus-Encryption Sector
+Extents are currently defined, the Data Length field shall be 2."); the
+256-extent ceiling is encoded as the wire byte `0` per §4.14.3.6
+paragraph 3. Because this Format Code does not require AACS
+authentication, the dispatcher walks the branch without consulting
+`MockDrive::auth`.
+
+Companion test suite `tests/synth_round246_bus_encryption_sector_extents.rs`
+(12 cases) exercises end-to-end round-trip through `MockDrive`, pins
+the CDB byte layout (Format `0x85`, allocation length `0x100C`, AGID
+field zeroed, Address + Layer Number reserved), pins the response wire
+layout (length field encoding `N*16 + 2`, per-record stride 16, Start
+LBA at offset 8 of each record, LBA Count at offset 12), pins the
+`256 ↔ wire-byte 0` sentinel for the Maximum field both directions,
+exercises the empty-table path explicitly, walks a three-extent
+hand-stuffed wire payload byte-by-byte to catch any silent u32-field
+swap, and rejects malformed inputs (length field below `2`, truncated
+buffer, misaligned stride). Nine additional unit tests live in
+`src/mmc.rs` alongside the existing CDB-layout cases.
+
 ### Added — Round 243 READ DISC STRUCTURE Format `0x84` Data Keys
   (Common §4.14.3.5 Table 4-19)
 

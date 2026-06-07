@@ -5,6 +5,47 @@ Content System) decryption layer used by Blu-ray Disc, per the
 publicly-published AACS LA technical specifications **Common Final
 0.953** (Oct 2012) and **BD-Prerecorded Final 0.953** (Oct 2012).
 
+Round 246 adds the **READ DISC STRUCTURE Format `0x85` (Bus-Encryption
+Sector Extents)** sub-payload per AACS Common §4.14.3.6 Table 4-20 /
+MMC-6 §6.22.3.1.6 Table 389 — the LBA-Extent table the logical unit
+publishes so the host can discover which sector ranges are subject to
+§4.11 Bus Encryption. Previous rounds covered Format `0x80` / `0x81`
+/ `0x82` (IDs), `0x83` (MKB packs), and `0x84` (Data Keys); `0x85`
+closes the sub-payload table at the no-authentication entry the spec
+permits without the §4.3 AKE.
+
+- **`ReadDiscStructure::aacs_bus_encryption_sector_extents()`** —
+  CDB constructor. Media Type BD, Format `0x85`, AGID reserved (no
+  AACS authentication required per §4.14.3.6 final sentence), Address
+  + Layer reserved. Allocation length sized for the worst-case 256
+  extents = 12 + 256 * 16 = 4108 bytes.
+- **`BusEncryptionSectorExtent { start_lba: u32, lba_count: u32 }`** —
+  one LBA range. Both fields are 32-bit big-endian on the wire (bytes
+  12+n*16..15+n*16 and 16+n*16..19+n*16 of Table 4-20).
+- **`BusEncryptionSectorExtentsResponse { maximum: u16, extents:
+  Vec<BusEncryptionSectorExtent> }`** + **`parse_bus_encryption_sector_extents_response(buf)`** —
+  variable-length wire layout `[length:u16 = N*16 + 2][reserved:u8]
+  [maximum:u8]` followed by `N` 16-byte extent records
+  `[reserved:8 || Start LBA:4 || LBA Count:4]`. The `maximum` field
+  spans `1..=256`; the on-wire encoding represents `256` as the byte
+  value `0` per the §4.14.3.6 paragraph 3 sentinel, which the parser
+  decodes back to its semantic `256`.
+- **`FORMAT_AACS_BUS_ENCRYPTION_SECTOR_EXTENTS`** = `0x85`,
+  **`BUS_ENCRYPTION_SECTOR_EXTENT_LEN`** = `16`.
+
+`MockDrive` gains `bus_encryption_sector_extents:
+Vec<BusEncryptionSectorExtent>` + `max_bus_encryption_sector_extents:
+u16` slots and a Format `0x85` dispatcher arm that serialises the
+table verbatim. The default `with_test_fixture` constructor pre-loads
+two non-overlapping extents in ascending Start LBA order (matching the
+§4.14.3.6 paragraph 3 sort rule) so the round-trip test surfaces any
+byte-order or stride drift; `Default` initialises an empty extent list
+with a `maximum` of `1`. The empty-table path emits a 4-byte response
+(`length = 2`) per §4.14.3.6 paragraph 2; the 256-extent ceiling is
+encoded as the wire byte `0` per §4.14.3.6 paragraph 3. Because this
+Format Code does not require AACS authentication, the dispatcher walks
+the branch without consulting `MockDrive::auth`.
+
 Round 243 adds the **READ DISC STRUCTURE Format `0x84` (Data Keys)**
 sub-payload per AACS Common §4.14.3.5 Table 4-19 — the encrypted
 Read/Write Data Key pair the Bus Encryption layer (§4.11) uses to wrap
