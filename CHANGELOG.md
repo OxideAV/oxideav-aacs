@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/OxideAV/oxideav-aacs/compare/v0.1.2...v0.2.0) - 2026-06-10
+
+### Other
+
+- feature-gate MockDrive + AKE self-checks behind test-util (out of default public API)
+- SEND DISC STRUCTURE Format 0x84 Write Data Key (Common §4.14.5.1 Table 4-28)
+- handshake-level integration tests for Format 0x85 Bus-Encryption Sector Extents
+- drop release-plz.toml — use release-plz defaults across the workspace
+- READ DISC STRUCTURE Format 0x85 Bus-Encryption Sector Extents (Common §4.14.3.6 Table 4-20)
+- READ DISC STRUCTURE Format 0x84 Data Keys sub-payload (Common §4.14.3.5 Table 4-19)
+- REPORT KEY Binding Nonce sub-payloads (Common §4.14.2.4 Table 4-10 / §4.14.2.5 Table 4-11)
+- typed Type-and-Version accessors (Common §3.2.5.1.1 / Table 3-2)
+- Content Revocation List parse + per-segment ECDSA verify + revocation-record lookup (PVB §2.7 / Tables 2-2..2-5)
+- signed Content Certificate parse + verify (PVB §2.4/§2.5/§2.6 + BD-Prerecorded Table 2-1)
+- AKE/EC runtime self-check entry points (Common §2.3 + §4.3)
+- structured ParseReport + fuzz/robustness suite for KEYDB.cfg parser
+- fix MKB Subset-Difference walk to match the spec
+- bundle the AACS LA root public key as a spec constant
+
 ### Changed — `MockDrive` + AKE self-checks moved behind `test-util` feature
 
 The in-process synthetic-drive test fixture `MockDrive` and the two
