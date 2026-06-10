@@ -1598,8 +1598,11 @@ pub trait DriveCommand {
 
 /// In-process synthetic-fixture implementation of [`DriveCommand`].
 ///
-/// Used exclusively by the Phase B test suite. The mock honours the
-/// dispatch path a real drive would follow: it inspects the CDB,
+/// A `test-util`-gated fixture: it is reachable from the crate's own
+/// tests and from the `test-util`-gated AKE self-checks
+/// ([`crate::ake_full_self_check`] / [`crate::all_self_checks`]), but is
+/// not part of the default public API. The mock honours the dispatch
+/// path a real drive would follow: it inspects the CDB,
 /// recognises the AACS Key Format / Format Code, and returns a
 /// hand-stuffed payload (or stores the incoming SEND KEY parameter
 /// list for later inspection by the test).
@@ -1608,6 +1611,7 @@ pub trait DriveCommand {
 /// because `Default` is only auto-derived for arrays up to length 32;
 /// the 40-byte ECDSA-secp160r1 point/signature fields and the 92-byte
 /// certificate field exceed that bound.
+#[cfg(any(test, feature = "test-util"))]
 #[derive(Debug, Clone)]
 pub struct MockDrive {
     /// AGID the mock will return when REPORT KEY Key Format `0x00` is
@@ -1712,6 +1716,7 @@ pub struct MockDrive {
     pub auth: Option<crate::ake::DriveAuthState>,
 }
 
+#[cfg(any(test, feature = "test-util"))]
 impl Default for MockDrive {
     fn default() -> Self {
         Self {
@@ -1743,6 +1748,7 @@ impl Default for MockDrive {
     }
 }
 
+#[cfg(any(test, feature = "test-util"))]
 impl MockDrive {
     /// Construct a `MockDrive` populated with a deterministic
     /// non-zero fixture so tests can pattern-match on returned bytes.
@@ -1862,6 +1868,7 @@ impl MockDrive {
     }
 }
 
+#[cfg(any(test, feature = "test-util"))]
 impl DriveCommand for MockDrive {
     fn execute(
         &mut self,

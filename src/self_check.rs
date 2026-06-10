@@ -56,12 +56,17 @@
 //! cleanly on this build.
 
 use crate::ake::{
-    aacs_la_pub_point, build_signed_certificate, bus_key_from_point, host_authenticate,
-    DriveAuthState, HostCredentials, AACS_LA_PUB_X, AACS_LA_PUB_Y, BUS_KEY_LEN, CERT_TYPE_DRIVE,
+    aacs_la_pub_point, bus_key_from_point, AACS_LA_PUB_X, AACS_LA_PUB_Y, BUS_KEY_LEN,
+};
+// These items are used only by the `test-util`-gated `ake_full_self_check`.
+#[cfg(any(test, feature = "test-util"))]
+use crate::ake::{
+    build_signed_certificate, host_authenticate, DriveAuthState, HostCredentials, CERT_TYPE_DRIVE,
     CERT_TYPE_HOST,
 };
 use crate::ec::{scalar_add, scalar_inv, scalar_mul, Point, N, U160};
 use crate::error::AacsError;
+#[cfg(any(test, feature = "test-util"))]
 use crate::mmc::MockDrive;
 
 /// Small deterministic scalar (low 32 bits only); used by every self-check
@@ -223,6 +228,10 @@ pub fn ake_ecdh_self_check() -> Result<(), AacsError> {
 /// sequence, and the ECDH x-coordinate Bus Key derivation. A failure at
 /// any step surfaces as [`AacsError::SelfCheckFailed`] with a tag
 /// pinpointing the failing leg of the handshake.
+///
+/// Gated behind the `test-util` cargo feature: it depends on the
+/// in-process [`MockDrive`] fixture, which is itself `test-util`-gated.
+#[cfg(any(test, feature = "test-util"))]
 pub fn ake_full_self_check() -> Result<(), AacsError> {
     // Synthetic AACS LA root key — *not* the real one.
     let la_priv = small_scalar(0x0abc_def1);
@@ -321,6 +330,13 @@ pub fn ake_full_self_check() -> Result<(), AacsError> {
 /// Phase C cryptographic primitives + §4.3 state machine + the bundled
 /// AACS LA root public key constants all round-trip cleanly on this
 /// build. On failure the returned error names the first failing leg.
+///
+/// Gated behind the `test-util` cargo feature because it cascades into
+/// [`ake_full_self_check`], which drives the `test-util`-gated
+/// [`MockDrive`] fixture. The three pure-math checks
+/// ([`curve_self_check`], [`aacs_la_pub_self_check`],
+/// [`ake_ecdh_self_check`]) remain callable on the default public API.
+#[cfg(any(test, feature = "test-util"))]
 pub fn all_self_checks() -> Result<(), AacsError> {
     curve_self_check()?;
     aacs_la_pub_self_check()?;

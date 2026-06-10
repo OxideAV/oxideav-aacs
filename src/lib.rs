@@ -92,13 +92,18 @@ pub use crate::mmc::{
     parse_send_key_host_key, parse_volume_id_response, AgidResponse, BindingNonceResponse,
     BusEncryptionSectorExtent, BusEncryptionSectorExtentsResponse, DataDirection, DataKeysResponse,
     DriveCertChallengeResponse, DriveCertResponse, DriveCommand, DriveKeyResponse,
-    MediaIdentifierResponse, MediaSerialNumberResponse, MkbPackResponse, MockDrive,
-    ReadDiscStructure, ReportKey, ScsiResponse, SendDiscStructure, SendKey, VolumeIdResponse,
+    MediaIdentifierResponse, MediaSerialNumberResponse, MkbPackResponse, ReadDiscStructure,
+    ReportKey, ScsiResponse, SendDiscStructure, SendKey, VolumeIdResponse,
 };
-pub use crate::self_check::{
-    aacs_la_pub_self_check, ake_ecdh_self_check, ake_full_self_check, all_self_checks,
-    curve_self_check,
-};
+// `MockDrive` is a `test-util`-gated synthetic-drive fixture, not part of
+// the default public API. See the `test-util` cargo feature.
+#[cfg(any(test, feature = "test-util"))]
+pub use crate::mmc::MockDrive;
+pub use crate::self_check::{aacs_la_pub_self_check, ake_ecdh_self_check, curve_self_check};
+// `ake_full_self_check` + `all_self_checks` drive the `test-util`-gated
+// `MockDrive`, so they are gated together behind `test-util`.
+#[cfg(any(test, feature = "test-util"))]
+pub use crate::self_check::{ake_full_self_check, all_self_checks};
 pub use crate::subdiff::{
     aes_g3, applies_to_device, apply_key_conversion_data, derive_processing_key, SubsetDifference,
 };

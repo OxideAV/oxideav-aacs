@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — `MockDrive` + AKE self-checks moved behind `test-util` feature
+
+The in-process synthetic-drive test fixture `MockDrive` and the two
+self-checks that drive it — `ake_full_self_check` and `all_self_checks`
+— are now gated behind a new `test-util` cargo feature and are no longer
+part of the default public API. They remain reachable from the crate's
+own tests (the crate enables `test-util` on itself via a self
+dev-dependency). The three pure-math self-checks — `curve_self_check`,
+`aacs_la_pub_self_check`, and `ake_ecdh_self_check` — stay public and
+ungated, as do `DriveCommand`, `ScsiResponse`, `DataDirection`, and all
+real command builders/parsers. External consumers that imported
+`MockDrive`, `ake_full_self_check`, or `all_self_checks` should enable
+`features = ["test-util"]` on the `oxideav-aacs` dependency.
+
 ### Added — Round 269 SEND DISC STRUCTURE Format `0x84` Write Data Key
   (Common §4.14.5 Tables 4-26 / 4-27 + §4.14.5.1 Table 4-28; MMC-6
   §6.36.2.1 Table 572 / §6.36.3.2.11 Table 591)

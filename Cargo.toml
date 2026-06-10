@@ -21,6 +21,15 @@ default = ["registry"]
 # pure parsing/crypto API without the framework dependency tree.
 registry = ["dep:oxideav-core"]
 
+# `test-util` exposes the in-process synthetic `MockDrive` SCSI fixture
+# plus the two `MockDrive`-coupled AKE self-checks (`ake_full_self_check`
+# / `all_self_checks`). These live outside the default public API; the
+# crate's own dev/test/bench targets enable the feature via the self
+# dev-dependency below. The three pure-math self-checks
+# (`curve_self_check` / `aacs_la_pub_self_check` / `ake_ecdh_self_check`)
+# stay public and ungated.
+test-util = []
+
 [dependencies]
 # Optional under the `registry` feature so consumers can use the parsers
 # and crypto primitives without pulling the framework dependency tree.
@@ -38,6 +47,12 @@ aes = "0.8"
 sha1 = "0.10"
 
 [dev-dependencies]
+# Self dev-dependency: enables the `test-util` feature on the library for
+# the crate's own test/bench/example targets, so `MockDrive` and the two
+# gated AKE self-checks are reachable from tests without being in the
+# default public API.
+oxideav-aacs = { path = ".", features = ["test-util"] }
+
 # Synthetic disc-layout fixtures need a scratch directory. `tempfile`
 # is a widely-used third-party crate (not an oxideav-* sibling) so it
 # does not implicate the "no cross-crate dev-deps" guardrail.
