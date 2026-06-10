@@ -5,15 +5,51 @@ Content System) decryption layer used by Blu-ray Disc, per the
 publicly-published AACS LA technical specifications **Common Final
 0.953** (Oct 2012) and **BD-Prerecorded Final 0.953** (Oct 2012).
 
-Round 269 adds the **SEND DISC STRUCTURE (`0xBF`) Format `0x84` (Write
-Data Key)** host→drive sub-payload per AACS Common §4.14.5 Tables 4-26
-/ 4-27 and §4.14.5.1 Table 4-28 / MMC-6 §6.36.2.1 Table 572 +
-§6.36.3.2.11 Table 591 — the command a host uses to replace the
-drive's Write Data Key for §4.11 Bus Encryption of written sectors.
-This opens the SEND DISC STRUCTURE side of the MMC chain; the
-remaining Table 4-27 entry (Format `0x85`, Bus-Encryption Sector
-Extents ingest with the §4.14.5.2 sorted / non-overlapping / capacity
-validation rules) is the named next step.
+Round 277 adds the **SEND DISC STRUCTURE (`0xBF`) Format `0x85`
+(Bus-Encryption Sector Extents)** host→drive ingest per AACS Common
+§4.14.5.2 Table 4-29 — the command a host uses to establish the sector
+ranges whose Bus Encryption Flag shall be set when data is written.
+This closes the Table 4-27 SEND DISC STRUCTURE Format table (Format
+`0x84` Write Data Key landed in round 269; `0x85` was the named next
+step). The §4.14.5.2 ingest rules are enforced end-to-end.
+
+- **`SendDiscStructure::aacs_bus_encryption_sector_extents(num_extents)`**
+  — typed `0xBF` CDB constructor (Media Type BD, Format Code `0x85`,
+  Parameter List Length `4 + N*16` big-endian, AGID reserved — Format
+  `0x85` requires no AACS authentication per §4.14.5.2 final sentence,
+  so MMC-6 §6.36.2.4 binds the AGID field only to `0x17` / `0x84`).
+  Passing `0` builds the "clear current extents" request.
+- **`build_send_disc_structure_bus_encryption_sector_extents(extents)`**
+  / **`parse_send_disc_structure_bus_encryption_sector_extents(buf)`** —
+  the Table 4-29 parameter list `[length:u16 = 2 + N*16][reserved:u16]`
+  followed by `N` 16-byte LBA Extent Structures
+  `[reserved:8 || Start LBA:u32 || LBA Count:u32]` (both fields
+  big-endian). The length field counts everything after itself; an
+  empty list serialises to the 4-byte `[0x00,0x02,0x00,0x00]` clear
+  request. The parser rejects a sub-`2` length field, a truncated
+  buffer, and a non-16-byte record stride.
+- **`validate_bus_encryption_sector_extents(extents, media_capacity_lba)`**
+  — the §4.14.5.2 paragraph-4 ingest check: extents must be sorted by
+  Start LBA, non-overlapping, carry a non-zero LBA Count, and fall
+  within `0..media_capacity_lba`. Each violation maps to the spec's
+  single `5/26/00 INVALID FIELD IN PARAMETER LIST` sense, surfaced as a
+  tagged `AacsError::InvalidValue`; pass `u32::MAX` to skip the
+  capacity leg. An empty list is always valid (the clear request).
+- **`FORMAT_AACS_BUS_ENCRYPTION_SECTOR_EXTENTS`** = `0x85` is shared
+  with the READ side (round 246); `BUS_ENCRYPTION_SECTOR_EXTENT_LEN` =
+  `16` is the per-record stride.
+
+`MockDrive` gains a `media_capacity_lba: u32` slot (Default `u32::MAX`)
+and a SEND DISC STRUCTURE Format `0x85` dispatcher arm. The arm
+rejects an `N` exceeding `max_bus_encryption_sector_extents` with the
+§4.14.5.2 `5/55/00 SYSTEM RESOURCE FAILURE` path, runs
+`validate_bus_encryption_sector_extents` against `media_capacity_lba`,
+then replaces the stored extent set (an empty list clears it). Because
+the command requires no authentication, the arm never consults
+`MockDrive::auth`. The round-277 suite (14 cases) pins the CDB +
+parameter-list byte layout, the build/parse inverse, every validation
+rejection with state-left-unchanged, the empty-list clear, and a full
+SEND→READ Format `0x85` read-back coherence loop.
 
 - **`SendDiscStructure`** — typed `0xBF` CDB builder (Media Type BD,
   Format Code at byte 7, Parameter List Length at bytes 8..9

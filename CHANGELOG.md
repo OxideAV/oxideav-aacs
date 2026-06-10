@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 277 SEND DISC STRUCTURE Format `0x85` Bus-Encryption Sector Extents (Common §4.14.5.2 Table 4-29)
+
+The SEND DISC STRUCTURE (`0xBF`) Format `0x85` sub-payload — the
+host→drive command that establishes the sector ranges whose Bus
+Encryption Flag shall be set when data is written — completes the
+§4.14.5 Table 4-27 Format table (Format `0x84` Write Data Key landed
+in round 269).
+
+- `SendDiscStructure::aacs_bus_encryption_sector_extents(num_extents)`
+  — typed `0xBF` CDB constructor (Media Type BD, Format Code `0x85`,
+  Parameter List Length `4 + N*16`, AGID reserved — Format `0x85`
+  requires no AACS authentication).
+- `build_send_disc_structure_bus_encryption_sector_extents` /
+  `parse_send_disc_structure_bus_encryption_sector_extents` — the
+  Table 4-29 parameter list `[length:u16 = 2 + N*16][reserved:u16]` +
+  `N` 16-byte LBA Extent Structures
+  `[reserved:8 || Start LBA:u32 || LBA Count:u32]`. An empty list is
+  the "clear current extents" request (`[0x00,0x02,0x00,0x00]`).
+- `validate_bus_encryption_sector_extents(extents, media_capacity_lba)`
+  — the §4.14.5.2 sorted / non-overlapping / non-zero-count /
+  within-capacity ingest check; each violation surfaces as a tagged
+  `AacsError::InvalidValue`.
+
+`MockDrive` gains a `media_capacity_lba: u32` slot and a SEND DISC
+STRUCTURE Format `0x85` dispatcher arm enforcing the §4.14.5.2
+SYSTEM RESOURCE FAILURE (too many extents) and INVALID FIELD IN
+PARAMETER LIST (malformed table) rules, then replacing the stored
+extent set. New integration suite
+`tests/synth_round277_send_bus_encryption_sector_extents.rs` (14 cases).
+
 ## [0.1.3](https://github.com/OxideAV/oxideav-aacs/compare/v0.1.2...v0.1.3) - 2026-06-10
 
 ### Other

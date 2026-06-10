@@ -802,6 +802,29 @@ impl SendDiscStructure {
         }
     }
 
+    /// Constructor for the AACS Bus-Encryption Sector Extents send
+    /// (Format `0x85`, Media Type BD) per AACS Common §4.14.5.2
+    /// Table 4-29 — the host→drive command that establishes the sector
+    /// extents whose Bus Encryption Flag shall be set when data is
+    /// written. The parameter list is `4 + N*16` bytes: a 4-byte header
+    /// (`length:u16 = 2 + N*16 || reserved:u16`) followed by `N` 16-byte
+    /// LBA Extent Structures. `num_extents` is `N`; passing `0` clears
+    /// the drive's current extents per §4.14.5.2 paragraph 1 ("If N is
+    /// zero, the logical unit shall clear its Bus-Encrypted Sector
+    /// Extents."). Unlike Format `0x84`, this command does not require
+    /// AACS authentication (§4.14.5.2 final sentence), so the AGID field
+    /// is reserved (MMC-6 §6.36.2.4 lists only `0x17` / `0x84`).
+    pub fn aacs_bus_encryption_sector_extents(num_extents: usize) -> Self {
+        Self {
+            media_type: MEDIA_TYPE_BD,
+            // 4-byte header + N * 16-byte LBA Extent Structures.
+            parameter_list_length: (4 + num_extents * BUS_ENCRYPTION_SECTOR_EXTENT_LEN) as u16,
+            format: FORMAT_AACS_BUS_ENCRYPTION_SECTOR_EXTENTS,
+            agid: 0,
+            control: 0,
+        }
+    }
+
     /// Serialize this CDB into 12 bytes per AACS Common Table 4-26 /
     /// MMC-6 Table 572.
     pub fn cdb(&self) -> [u8; MMC_CDB_LEN] {
@@ -1532,6 +1555,180 @@ pub fn parse_send_disc_structure_write_data_key(
     Ok(kwd)
 }
 
+/// Build the SEND DISC STRUCTURE parameter list for the Bus-Encryption
+/// Sector Extents send (Format `0x85`) per AACS Common §4.14.5.2
+/// Table 4-29.
+///
+/// Wire layout: `[length:u16 = 2 + N*16][reserved:u16]` followed by `N`
+/// 16-byte LBA Extent Structures, each
+/// `[reserved:8 || Start LBA:u32 || LBA Count:u32]` (both 32-bit fields
+/// big-endian). The two-byte DISC STRUCTURE Data Length field does not
+/// count itself, so its value is `2 + N*16` (the leading `2` covers the
+/// bytes-2..3 Reserved field). When `extents` is empty the length field
+/// is `2` and no extent records follow — the host's request to clear the
+/// drive's Bus-Encrypted Sector Extents (§4.14.5.2 paragraph 1).
+///
+/// The caller is responsible for sorting + validating the extents (see
+/// [`validate_bus_encryption_sector_extents`]); this builder serialises
+/// whatever it is given so a test can construct a deliberately malformed
+/// list and assert the drive rejects it.
+pub fn build_send_disc_structure_bus_encryption_sector_extents(
+    extents: &[BusEncryptionSectorExtent],
+) -> Vec<u8> {
+    let length = 2 + extents.len() * BUS_ENCRYPTION_SECTOR_EXTENT_LEN;
+    let mut out = Vec::with_capacity(2 + length);
+    out.push((length >> 8) as u8);
+    out.push(length as u8);
+    // Bytes 2..3: Reserved.
+    out.extend_from_slice(&[0u8, 0u8]);
+    for extent in extents {
+        // 8-byte Reserved leader (bytes 4..11 of the record).
+        out.extend_from_slice(&[0u8; 8]);
+        out.extend_from_slice(&extent.start_lba.to_be_bytes());
+        out.extend_from_slice(&extent.lba_count.to_be_bytes());
+    }
+    debug_assert_eq!(
+        out.len(),
+        4 + extents.len() * BUS_ENCRYPTION_SECTOR_EXTENT_LEN
+    );
+    out
+}
+
+/// Parse the SEND DISC STRUCTURE Bus-Encryption Sector Extents parameter
+/// list (Format `0x85`). Inverse of
+/// [`build_send_disc_structure_bus_encryption_sector_extents`]; used by
+/// [`MockDrive`] and tests. Returns the extents in their on-the-wire
+/// order (no sort / overlap / capacity validation — that is
+/// [`validate_bus_encryption_sector_extents`]'s job).
+///
+/// Errors:
+/// * [`AacsError::InvalidValue`] — the length field is below the
+///   spec-mandated minimum of `2` (which does not even cover the
+///   bytes-2..3 Reserved field).
+/// * [`AacsError::Truncated`] — the buffer is shorter than the 4-byte
+///   header, shorter than `2 + length` total, or `(length - 2)` is not a
+///   multiple of 16 (a malformed table per the Table 4-29 16-byte
+///   stride).
+pub fn parse_send_disc_structure_bus_encryption_sector_extents(
+    buf: &[u8],
+) -> Result<Vec<BusEncryptionSectorExtent>, AacsError> {
+    let length = read_u16_be(
+        buf,
+        "SEND_DISC_STRUCTURE Bus-Encryption Sector Extents header",
+    )? as usize;
+    // Per §4.14.5.2 the length field equals `2 + N*16`. The `+2` covers
+    // the bytes-2..3 Reserved field; the `N*16` segment covers the `N`
+    // 16-byte LBA Extent Structures. The minimum legal value is `2`
+    // (N = 0, the "clear current extents" request).
+    if length < 2 {
+        return Err(AacsError::InvalidValue {
+            what: "SEND_DISC_STRUCTURE Bus-Encryption Sector Extents length",
+            value: length as u64,
+        });
+    }
+    if buf.len() < 2 + length {
+        return Err(AacsError::Truncated(
+            "SEND_DISC_STRUCTURE Bus-Encryption Sector Extents payload",
+        ));
+    }
+    let extent_section_len = length - 2;
+    if extent_section_len % BUS_ENCRYPTION_SECTOR_EXTENT_LEN != 0 {
+        return Err(AacsError::Truncated(
+            "SEND_DISC_STRUCTURE Bus-Encryption Sector Extents record stride",
+        ));
+    }
+    let extent_count = extent_section_len / BUS_ENCRYPTION_SECTOR_EXTENT_LEN;
+    let mut extents = Vec::with_capacity(extent_count);
+    // Extent records start at byte 4 with their 8-byte Reserved field.
+    for i in 0..extent_count {
+        let base = 4 + i * BUS_ENCRYPTION_SECTOR_EXTENT_LEN;
+        let start_lba =
+            u32::from_be_bytes([buf[base + 8], buf[base + 9], buf[base + 10], buf[base + 11]]);
+        let lba_count = u32::from_be_bytes([
+            buf[base + 12],
+            buf[base + 13],
+            buf[base + 14],
+            buf[base + 15],
+        ]);
+        extents.push(BusEncryptionSectorExtent {
+            start_lba,
+            lba_count,
+        });
+    }
+    Ok(extents)
+}
+
+/// Validate a Bus-Encryption Sector Extents list against the AACS
+/// Common §4.14.5.2 ingest rules a logical unit applies to a SEND DISC
+/// STRUCTURE Format `0x85` parameter list.
+///
+/// Per §4.14.5.2 paragraph 4 the host shall sort the extents by Start
+/// LBA and ensure they do not overlap; the logical unit returns
+/// `5/26/00 INVALID FIELD IN PARAMETER LIST` if the extents overlap, are
+/// not sorted, lie beyond the maximum capacity of the current media, or
+/// carry a zero LBA Count. `media_capacity_lba` is the number of
+/// addressable LBAs on the current media; an extent
+/// `[start_lba, start_lba + lba_count)` must fall entirely within
+/// `0..media_capacity_lba`. Pass `u32::MAX` to skip the capacity check
+/// when the caller does not know the media geometry.
+///
+/// All four violations map to the single SCSI sense code in the spec, so
+/// they surface as [`AacsError::InvalidValue`] with a `what` tag naming
+/// the specific rule that failed (`"… LBA Count is zero"`, `"… not
+/// sorted by Start LBA"`, `"… extents overlap"`, `"… extent beyond media
+/// capacity"`). An empty list is always valid (the "clear extents"
+/// request).
+pub fn validate_bus_encryption_sector_extents(
+    extents: &[BusEncryptionSectorExtent],
+    media_capacity_lba: u32,
+) -> Result<(), AacsError> {
+    let capacity = media_capacity_lba as u64;
+    let mut prev_end: Option<u64> = None;
+    let mut prev_start: u64 = 0;
+    for extent in extents {
+        // "if an LBA Count is zero" → INVALID FIELD IN PARAMETER LIST.
+        if extent.lba_count == 0 {
+            return Err(AacsError::InvalidValue {
+                what: "SEND_DISC_STRUCTURE Format 0x85 LBA Count is zero",
+                value: extent.start_lba as u64,
+            });
+        }
+        let start = extent.start_lba as u64;
+        // One-past-the-last LBA. Both fields are u32, so the sum fits in
+        // u64 without overflow.
+        let end = start + extent.lba_count as u64;
+        // "if any LBA Extent is located beyond the maximum capacity of
+        // the current media" → INVALID FIELD IN PARAMETER LIST.
+        if end > capacity {
+            return Err(AacsError::InvalidValue {
+                what: "SEND_DISC_STRUCTURE Format 0x85 extent beyond media capacity",
+                value: start,
+            });
+        }
+        if let Some(prev_end) = prev_end {
+            // "if the LBA Extents are not sorted" — Start LBA must be
+            // non-decreasing.
+            if start < prev_start {
+                return Err(AacsError::InvalidValue {
+                    what: "SEND_DISC_STRUCTURE Format 0x85 extents not sorted by Start LBA",
+                    value: start,
+                });
+            }
+            // "if the LBA Extents contain overlapping regions" — this
+            // extent must begin at or after the previous extent's end.
+            if start < prev_end {
+                return Err(AacsError::InvalidValue {
+                    what: "SEND_DISC_STRUCTURE Format 0x85 extents overlap",
+                    value: start,
+                });
+            }
+        }
+        prev_end = Some(end);
+        prev_start = start;
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------
 // DriveCommand trait + mock drive
 // ---------------------------------------------------------------------
@@ -1698,6 +1895,13 @@ pub struct MockDrive {
     /// case the on-wire Data Length is `2` and no extent records are
     /// emitted.
     pub bus_encryption_sector_extents: Vec<BusEncryptionSectorExtent>,
+    /// Number of addressable LBAs on the synthetic media. Used by the
+    /// SEND DISC STRUCTURE Format `0x85` ingest path to enforce the
+    /// §4.14.5.2 "beyond the maximum capacity of the current media"
+    /// rule: an incoming extent `[start_lba, start_lba + lba_count)`
+    /// must fall entirely within `0..media_capacity_lba`. `Default`
+    /// initialises this to `u32::MAX` (no effective capacity limit).
+    pub media_capacity_lba: u32,
     /// SEND KEY Host Certificate Challenge payload captured from the
     /// last `aacs_host_cert_challenge` issued. `None` until the host
     /// pushes one.
@@ -1740,6 +1944,7 @@ impl Default for MockDrive {
             last_write_data_key_sent: None,
             max_bus_encryption_sector_extents: 1,
             bus_encryption_sector_extents: Vec::new(),
+            media_capacity_lba: u32::MAX,
             last_host_cert_chal: None,
             last_host_key: None,
             agid_invalidated: false,
@@ -1860,6 +2065,9 @@ impl MockDrive {
                     lba_count: 0x0000_4000,
                 },
             ],
+            // Synthetic media large enough to admit the fixture extents
+            // plus headroom for ingest-path tests.
+            media_capacity_lba: 0x0100_0000,
             last_host_cert_chal: None,
             last_host_key: None,
             agid_invalidated: false,
@@ -2181,6 +2389,37 @@ impl DriveCommand for MockDrive {
                         };
                         self.write_data_key = kwd_plain;
                         self.last_write_data_key_sent = Some(wire_kwd);
+                        Ok(ScsiResponse::good(Vec::new()))
+                    }
+                    FORMAT_AACS_BUS_ENCRYPTION_SECTOR_EXTENTS => {
+                        // §4.14.5.2 Table 4-29: the parameter list carries
+                        // `N` LBA Extent Structures. This command does
+                        // not require AACS authentication, so the `auth`
+                        // slot is not consulted. The ingest rules:
+                        //   * N exceeding the drive's storable maximum →
+                        //     5/55/00 SYSTEM RESOURCE FAILURE.
+                        //   * overlapping / unsorted / zero-count /
+                        //     beyond-capacity extents → 5/26/00 INVALID
+                        //     FIELD IN PARAMETER LIST.
+                        //   * N == 0 → clear the current extents.
+                        let new_extents =
+                            parse_send_disc_structure_bus_encryption_sector_extents(data_out)?;
+                        if new_extents.len() as u64 > self.max_bus_encryption_sector_extents as u64
+                        {
+                            // SYSTEM RESOURCE FAILURE — the host asked the
+                            // drive to store more extents than it can hold.
+                            return Err(AacsError::InvalidValue {
+                                what: "SEND_DISC_STRUCTURE Format 0x85 extent count exceeds drive capacity",
+                                value: new_extents.len() as u64,
+                            });
+                        }
+                        validate_bus_encryption_sector_extents(
+                            &new_extents,
+                            self.media_capacity_lba,
+                        )?;
+                        // Accepted: replace the current set (an empty list
+                        // clears it per §4.14.5.2 paragraph 1).
+                        self.bus_encryption_sector_extents = new_extents;
                         Ok(ScsiResponse::good(Vec::new()))
                     }
                     other => Err(AacsError::InvalidValue {
