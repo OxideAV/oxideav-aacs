@@ -7,6 +7,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 269 SEND DISC STRUCTURE Format `0x84` Write Data Key
+  (Common §4.14.5 Tables 4-26 / 4-27 + §4.14.5.1 Table 4-28; MMC-6
+  §6.36.2.1 Table 572 / §6.36.3.2.11 Table 591)
+
+The SEND DISC STRUCTURE (`0xBF`) command — the host→drive counterpart
+of READ DISC STRUCTURE — enters the typed MMC surface with its Format
+Code `0x84` (Write Data Key) sub-payload: the command a host issues to
+replace the Write Data Key the §4.11 Bus Encryption layer uses to wrap
+sectors it writes. Previous rounds covered the full READ-side Format
+Code table (`0x80`..`0x85`); this round opens the SEND side at the
+§4.14.5.1 entry. The remaining Table 4-27 entry — Format `0x85`,
+Bus-Encryption Sector Extents ingest with the §4.14.5.2 sorted /
+non-overlapping / capacity / non-zero-count validation rules — is the
+named next step.
+
+- **`SendDiscStructure`** — typed `0xBF` CDB builder per Table 4-26:
+  Media Type in the low nibble of byte 1, bytes 2..6 reserved, Format
+  Code at byte 7, Parameter List Length at bytes 8..9 (big-endian),
+  AGID in bits 7..6 of byte 10 (used only for Format `0x84` per MMC-6
+  §6.36.2.4), Control at byte 11. `cdb()` / `parse_cdb()` inverses
+  mirror the existing `ReadDiscStructure` / `SendKey` pattern.
+- **`SendDiscStructure::aacs_write_data_key(agid)`** — constructor for
+  the Format `0x84` send. Media Type BD, parameter list length 20
+  (= 4-byte header + 16-byte encrypted Write Data Key).
+- **`build_send_disc_structure_write_data_key(kwd_encrypted)`** /
+  **`parse_send_disc_structure_write_data_key(buf)`** — the Table 4-28
+  parameter list `[length:u16=0x0012][reserved:u16][Kwd:16]`. The
+  two-byte Data Length field does not count itself, so its mandated
+  value is `0x0012`; the parser rejects any other length field and
+  truncated buffers. Bytes 4..19 carry the replacement Write Data Key,
+  encrypted by the Bus Key using AES-128E per §4.14.5.1 paragraph 3 —
+  the host wraps the plaintext with the existing
+  `aes_128_ecb_encrypt(bus_key, kwd)` primitive before building the
+  list.
+- **`SEND_DISC_STRUCTURE_OPCODE`** = `0xBF` and
+  **`FORMAT_AACS_WRITE_DATA_KEY`** = `0x84` — named constants for the
+  new opcode and the SEND-side Format Code (numerically the same value
+  as the READ-side `FORMAT_AACS_DATA_KEYS`, named separately because
+  Table 4-27 defines it as a distinct data-out payload).
+
+`MockDrive` gains a `SEND_DISC_STRUCTURE_OPCODE` dispatcher arm and a
+`last_write_data_key_sent: Option<[u8; 16]>` capture slot holding the
+on-wire (still-wrapped) key field. In `auth` mode the mock unwraps the
+incoming key with AES-128D under the established Bus Key and stores
+the plaintext in `write_data_key`, returning the spec-mandated KEY NOT
+ESTABLISHED error path (§4.14.5.1 final paragraph) when the `auth`
+slot is armed but no Bus Key has been derived; in static-fixture mode
+the wire bytes are adopted verbatim, mirroring the READ-side Format
+`0x84` behaviour. The §4.14.5.1 INSUFFICIENT PERMISSION branch (host
+not authorized to send the Write Data Key) is not modelled — the mock
+treats every caller as authorized. The Read Data Key is never touched,
+matching the §4.11 "the drive sets Kwd equal to Krd on media insertion
+until the host overwrites it" lifecycle.
+
+Companion test suite `tests/synth_round269_write_data_key_send.rs`
+(9 cases): static-mode end-to-end round-trip (wire bytes adopted
+verbatim, Krd untouched, response data-in phase empty), CDB byte
+layout pin against Table 4-26 (opcode/media-type/reserved-span/format/
+length/AGID/control), parameter-list byte layout pin against Table
+4-28, wrap-under-planted-Bus-Key (drive stores plaintext, capture slot
+stores wrapped bytes), KEY-NOT-ESTABLISHED error path with state
+unchanged, read-back coherence (SEND `0x84` then READ `0x84` recovers
+the new Kwd and the unchanged Krd under the same Bus Key), a full §4.3
+AKE handshake whose host-side Bus Key wraps a replacement Kwd that the
+drive's independently-derived Bus Key unwraps to the same plaintext,
+malformed-parameter-list rejection (wrong length field + truncated
+buffer, state unchanged both times), and a builder/parser
+encode→decode→unwrap round-trip. Eight additional unit tests live in
+`src/mmc.rs` alongside the existing CDB-layout cases (including
+unknown-Format and wrong-data-direction rejection by the dispatcher
+arm).
+
 ### Added — Round 246 READ DISC STRUCTURE Format `0x85` Bus-Encryption
   Sector Extents (Common §4.14.3.6 Table 4-20 / MMC-6 §6.22.3.1.6 Table 389)
 

@@ -73,6 +73,9 @@ pub const REPORT_KEY_OPCODE: u8 = 0xA4;
 pub const SEND_KEY_OPCODE: u8 = 0xA3;
 /// SCSI MMC `READ DISC STRUCTURE` opcode (MMC-6 §6.22.2.1).
 pub const READ_DISC_STRUCTURE_OPCODE: u8 = 0xAD;
+/// SCSI MMC `SEND DISC STRUCTURE` opcode (MMC-6 §6.36.2.1; AACS Common
+/// §4.14.5 Table 4-26).
+pub const SEND_DISC_STRUCTURE_OPCODE: u8 = 0xBF;
 
 /// SCSI Multi-Media Commands CDB fixed length for REPORT KEY / SEND
 /// KEY / READ DISC STRUCTURE (12 bytes — SPC-3 §4.3.2 categorises these
@@ -144,6 +147,13 @@ pub const FORMAT_AACS_DATA_KEYS: u8 = 0x84;
 /// to §4.11 Bus Encryption). MMC-6 §6.22.3.1.6 Table 389; AACS Common
 /// §4.14.3.6 Table 4-20. Does **not** require AACS authentication.
 pub const FORMAT_AACS_BUS_ENCRYPTION_SECTOR_EXTENTS: u8 = 0x85;
+/// SEND DISC STRUCTURE Format Code `0x84`: Write Data Key of AACS
+/// (AACS Common §4.14.5 Table 4-27 / §4.14.5.1 Table 4-28; MMC-6
+/// §6.36.3.2.11 Table 591). Numerically the same Format Code value as
+/// [`FORMAT_AACS_DATA_KEYS`] on the READ side, but the data-out payload
+/// carries only the host's replacement Write Data Key (encrypted under
+/// the Bus Key with AES-128E).
+pub const FORMAT_AACS_WRITE_DATA_KEY: u8 = 0x84;
 
 /// READ DISC STRUCTURE Media Type `0001b`: BD (MMC-6 Table 382).
 pub const MEDIA_TYPE_BD: u8 = 0x01;
@@ -723,6 +733,104 @@ impl ReadDiscStructure {
             layer_number: cdb[6],
             format: cdb[7],
             allocation_length: ((cdb[8] as u16) << 8) | (cdb[9] as u16),
+            agid: (cdb[10] >> 6) & 0x03,
+            control: cdb[11],
+        })
+    }
+}
+
+// ---------------------------------------------------------------------
+// SEND_DISC_STRUCTURE (0xBF) CDB
+// ---------------------------------------------------------------------
+
+/// Typed builder for the `SEND_DISC_STRUCTURE` (`0xBF`) CDB — the
+/// host→drive counterpart of [`ReadDiscStructure`].
+///
+/// Per AACS Common §4.14.5 Table 4-26 (MMC-6 §6.36.2.1 Table 572) the
+/// CDB layout is:
+///
+/// ```text
+///  Byte 0   : Operation Code (0xBF)
+///  Byte 1   : Reserved [7..4] | Media Type [3..0]
+///  Bytes 2-6: Reserved
+///  Byte 7   : Format Code
+///  Bytes 8-9: Parameter List Length (big-endian)
+///  Byte 10  : (AGID << 6) | Reserved
+///  Byte 11  : Control
+/// ```
+///
+/// AACS defines two Format Codes for this command (§4.14.5 Table 4-27):
+/// `0x84` (Write Data Key) and `0x85` (Bus-Encryption Sector Extents).
+/// Per MMC-6 §6.36.2.4 the AGID field is used only when the Format Code
+/// is `0x17` or `0x84`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SendDiscStructure {
+    /// Media Type — low 4 bits of byte 1. `0x00` = DVD, `0x01` = BD.
+    pub media_type: u8,
+    /// Format Code byte 7 — `0x84` (Write Data Key) or `0x85`
+    /// (Bus-Encryption Sector Extents) for AACS per Table 4-27.
+    pub format: u8,
+    /// Parameter list length in bytes the host will send (bytes 8..9,
+    /// big-endian).
+    pub parameter_list_length: u16,
+    /// AGID (high 2 bits of byte 10). Used when the Format Code is
+    /// `0x84` per MMC-6 §6.36.2.4; reserved otherwise.
+    pub agid: u8,
+    /// SAM-3 control byte — typically `0x00`.
+    pub control: u8,
+}
+
+impl SendDiscStructure {
+    /// Constructor for the AACS Write Data Key send (Format `0x84`,
+    /// Media Type BD) per AACS Common §4.14.5.1. The parameter list is
+    /// 20 bytes — 4-byte header (`length:u16=0x0012 || reserved:u16`) +
+    /// the 16-byte replacement Write Data Key encrypted under the Bus
+    /// Key with AES-128E (Table 4-28). Requires the Bus-Key-established
+    /// state of the §4.3 AKE; otherwise the drive shall terminate with
+    /// COPY PROTECTION KEY EXCHANGE FAILURE – KEY NOT ESTABLISHED, and
+    /// a host not authorized to send the Write Data Key shall be
+    /// answered with INSUFFICIENT PERMISSION (§4.14.5.1 final
+    /// paragraph).
+    pub fn aacs_write_data_key(agid: u8) -> Self {
+        Self {
+            media_type: MEDIA_TYPE_BD,
+            format: FORMAT_AACS_WRITE_DATA_KEY,
+            // 4-byte header + 16-byte encrypted Write Data Key.
+            parameter_list_length: 20,
+            agid: agid & 0x03,
+            control: 0,
+        }
+    }
+
+    /// Serialize this CDB into 12 bytes per AACS Common Table 4-26 /
+    /// MMC-6 Table 572.
+    pub fn cdb(&self) -> [u8; MMC_CDB_LEN] {
+        let mut cdb = [0u8; MMC_CDB_LEN];
+        cdb[0] = SEND_DISC_STRUCTURE_OPCODE;
+        cdb[1] = self.media_type & 0x0F;
+        // Bytes 2..6 Reserved.
+        cdb[7] = self.format;
+        cdb[8] = (self.parameter_list_length >> 8) as u8;
+        cdb[9] = self.parameter_list_length as u8;
+        cdb[10] = (self.agid & 0x03) << 6;
+        cdb[11] = self.control;
+        cdb
+    }
+
+    /// Inverse of [`SendDiscStructure::cdb`]. Returns
+    /// [`AacsError::InvalidValue`] when the opcode byte is not
+    /// `0xBF`.
+    pub fn parse_cdb(cdb: &[u8; MMC_CDB_LEN]) -> Result<Self, AacsError> {
+        if cdb[0] != SEND_DISC_STRUCTURE_OPCODE {
+            return Err(AacsError::InvalidValue {
+                what: "SEND_DISC_STRUCTURE opcode",
+                value: cdb[0] as u64,
+            });
+        }
+        Ok(Self {
+            media_type: cdb[1] & 0x0F,
+            format: cdb[7],
+            parameter_list_length: ((cdb[8] as u16) << 8) | (cdb[9] as u16),
             agid: (cdb[10] >> 6) & 0x03,
             control: cdb[11],
         })
@@ -1378,6 +1486,52 @@ pub fn parse_send_key_host_key(
     Ok((hv, hsig))
 }
 
+/// Build the 20-byte SEND DISC STRUCTURE parameter list for the Write
+/// Data Key send (Format `0x84`) per AACS Common §4.14.5.1 Table 4-28 /
+/// MMC-6 §6.36.3.2.11 Table 591.
+///
+/// Wire layout: `[length:u16=0x0012][reserved:u16][Kwd:16]`. The
+/// two-byte DISC STRUCTURE Data Length field does not count itself, so
+/// its value is `0x0012` (= 18, covering bytes 2..19). Bytes 4..19
+/// carry the replacement Write Data Key, encrypted by the Bus Key
+/// using AES-128E (§4.14.5.1 paragraph 3) — the caller wraps the
+/// plaintext `Kwd` with `aes_128_ecb_encrypt(bus_key, kwd)` before
+/// building the parameter list.
+pub fn build_send_disc_structure_write_data_key(
+    write_data_key_encrypted: &[u8; DATA_KEY_LEN],
+) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + DATA_KEY_LEN);
+    out.extend_from_slice(&[0x00, 0x12, 0x00, 0x00]);
+    out.extend_from_slice(write_data_key_encrypted);
+    debug_assert_eq!(out.len(), 20);
+    out
+}
+
+/// Parse the 20-byte SEND DISC STRUCTURE Write Data Key parameter
+/// list. Inverse of [`build_send_disc_structure_write_data_key`]; used
+/// by [`MockDrive`] and tests. Returns the 16-byte Write Data Key in
+/// its on-the-wire (Bus-Key-encrypted) form. Rejects a length field
+/// other than the Table 4-28 mandated `0x0012` and truncated buffers.
+pub fn parse_send_disc_structure_write_data_key(
+    buf: &[u8],
+) -> Result<[u8; DATA_KEY_LEN], AacsError> {
+    let length = read_u16_be(buf, "SEND_DISC_STRUCTURE Write Data Key header")?;
+    if length != 0x0012 {
+        return Err(AacsError::InvalidValue {
+            what: "SEND_DISC_STRUCTURE Write Data Key length",
+            value: length as u64,
+        });
+    }
+    if buf.len() < 4 + DATA_KEY_LEN {
+        return Err(AacsError::Truncated(
+            "SEND_DISC_STRUCTURE Write Data Key payload",
+        ));
+    }
+    let mut kwd = [0u8; DATA_KEY_LEN];
+    kwd.copy_from_slice(&buf[4..4 + DATA_KEY_LEN]);
+    Ok(kwd)
+}
+
 // ---------------------------------------------------------------------
 // DriveCommand trait + mock drive
 // ---------------------------------------------------------------------
@@ -1385,7 +1539,8 @@ pub fn parse_send_key_host_key(
 /// Direction of the SCSI data phase for an MMC CDB. Set by callers when
 /// dispatching through the [`DriveCommand`] trait. The opcode itself
 /// determines the direction (REPORT KEY + READ DISC STRUCTURE are
-/// drive→host; SEND KEY is host→drive), but the explicit enum makes
+/// drive→host; SEND KEY + SEND DISC STRUCTURE are host→drive), but the
+/// explicit enum makes
 /// platform back-ends easier to wire up since each OS surface
 /// (`SG_IO`'s `dxfer_direction`, `IOSCSITaskDeviceInterface`'s
 /// transfer-direction, Windows' `SCSI_PASS_THROUGH_DIRECT::DataIn`)
@@ -1518,6 +1673,13 @@ pub struct MockDrive {
     /// `0x84` dispatch, so tests can assert the mock walked the §4.11
     /// branch. Reset by [`Self::with_test_fixture`] / [`Default`].
     pub last_data_keys_read: bool,
+    /// The on-the-wire 16-byte Write Data Key field captured from the
+    /// last SEND DISC STRUCTURE Format `0x84` parameter list the mock
+    /// accepted (§4.14.5.1 Table 4-28 bytes 4..19 — still in its
+    /// Bus-Key-encrypted form when the `auth` slot carries a Bus Key).
+    /// The decrypted (or, in static mode, verbatim) value lands in
+    /// [`Self::write_data_key`]. `None` until the host sends one.
+    pub last_write_data_key_sent: Option<[u8; DATA_KEY_LEN]>,
     /// Maximum number of Bus-Encryption Sector Extents the synthetic
     /// logical unit advertises in response to READ DISC STRUCTURE
     /// Format `0x85` (§4.14.3.6 Table 4-20 byte 3). Set to a value in
@@ -1570,6 +1732,7 @@ impl Default for MockDrive {
             read_data_key: [0u8; DATA_KEY_LEN],
             write_data_key: [0u8; DATA_KEY_LEN],
             last_data_keys_read: false,
+            last_write_data_key_sent: None,
             max_bus_encryption_sector_extents: 1,
             bus_encryption_sector_extents: Vec::new(),
             last_host_cert_chal: None,
@@ -1675,6 +1838,7 @@ impl MockDrive {
             read_data_key,
             write_data_key,
             last_data_keys_read: false,
+            last_write_data_key_sent: None,
             // Deterministic fixture: advertise capacity for 4 extents
             // and pre-populate two non-overlapping extents in wire
             // order. Each extent value is patterned so any byte-order
@@ -1966,6 +2130,54 @@ impl DriveCommand for MockDrive {
                     }
                     other => Err(AacsError::InvalidValue {
                         what: "MockDrive READ_DISC_STRUCTURE Format",
+                        value: other as u64,
+                    }),
+                }
+            }
+            SEND_DISC_STRUCTURE_OPCODE => {
+                let sds = SendDiscStructure::parse_cdb(cdb)?;
+                if direction != DataDirection::ToDevice {
+                    return Err(AacsError::InvalidValue {
+                        what: "MockDrive SEND_DISC_STRUCTURE data direction",
+                        value: 0,
+                    });
+                }
+                match sds.format {
+                    FORMAT_AACS_WRITE_DATA_KEY => {
+                        // §4.14.5.1: the parameter list carries the
+                        // replacement Write Data Key, encrypted by the
+                        // Bus Key using AES-128E. In `auth` mode the
+                        // mock unwraps it under the established Bus Key
+                        // (and enforces the spec's KEY NOT ESTABLISHED
+                        // error when the AKE has not completed); in
+                        // static-fixture mode the wire bytes are
+                        // adopted verbatim, mirroring the READ-side
+                        // Format 0x84 behaviour. The §4.14.5.1
+                        // INSUFFICIENT PERMISSION branch (host not
+                        // authorized to send the Write Data Key) is not
+                        // modelled — the mock treats every caller as
+                        // authorized.
+                        let wire_kwd = parse_send_disc_structure_write_data_key(data_out)?;
+                        let kwd_plain = match &self.auth {
+                            Some(a) if a.bus_key.is_some() => {
+                                crate::aes::aes_128_ecb_decrypt(&a.bus_key.unwrap(), &wire_kwd)
+                            }
+                            Some(_) => {
+                                // Auth started but Bus Key not yet
+                                // derived: spec-mandated error path.
+                                return Err(AacsError::InvalidValue {
+                                    what: "SEND_DISC_STRUCTURE Format 0x84 without Bus Key",
+                                    value: 0,
+                                });
+                            }
+                            None => wire_kwd,
+                        };
+                        self.write_data_key = kwd_plain;
+                        self.last_write_data_key_sent = Some(wire_kwd);
+                        Ok(ScsiResponse::good(Vec::new()))
+                    }
+                    other => Err(AacsError::InvalidValue {
+                        what: "MockDrive SEND_DISC_STRUCTURE Format",
                         value: other as u64,
                     }),
                 }
@@ -2458,5 +2670,118 @@ mod tests {
         assert_eq!(parsed.read_data_key_encrypted, drive.read_data_key);
         assert_eq!(parsed.write_data_key_encrypted, drive.write_data_key);
         assert!(drive.last_data_keys_read);
+    }
+
+    #[test]
+    fn send_disc_structure_cdb_layout_matches_table_4_26() {
+        // AACS Common §4.14.5 Table 4-26 / MMC-6 Table 572: opcode
+        // 0xBF, Media Type in the low nibble of byte 1, bytes 2..6
+        // Reserved, Format Code at byte 7, Parameter List Length at
+        // bytes 8..9 big-endian, AGID in bits 7..6 of byte 10.
+        let sds = SendDiscStructure::aacs_write_data_key(2);
+        let cdb = sds.cdb();
+        assert_eq!(cdb[0], 0xBF);
+        assert_eq!(cdb[1] & 0x0F, MEDIA_TYPE_BD);
+        assert_eq!(cdb[2..7], [0x00, 0x00, 0x00, 0x00, 0x00]);
+        assert_eq!(cdb[7], 0x84);
+        // Parameter list length 20 = 0x0014 big-endian.
+        assert_eq!(cdb[8], 0x00);
+        assert_eq!(cdb[9], 0x14);
+        // AGID=2 in bits 7..6 of byte 10; low 6 bits reserved.
+        assert_eq!(cdb[10], 0x80);
+        assert_eq!(cdb[11], 0x00);
+
+        let parsed = SendDiscStructure::parse_cdb(&cdb).unwrap();
+        assert_eq!(parsed, sds);
+    }
+
+    #[test]
+    fn send_disc_structure_parse_cdb_rejects_wrong_opcode() {
+        let mut cdb = [0u8; MMC_CDB_LEN];
+        cdb[0] = 0xAD;
+        assert!(SendDiscStructure::parse_cdb(&cdb).is_err());
+    }
+
+    #[test]
+    fn write_data_key_parameter_list_round_trip_matches_table_4_28() {
+        // Table 4-28: [length:u16=0x0012][reserved:u16][Kwd:16]; the
+        // key field occupies bytes 4..19. Index-tag the key bytes so a
+        // positional slip surfaces as a wrong value.
+        let mut kwd = [0u8; DATA_KEY_LEN];
+        for (i, b) in kwd.iter_mut().enumerate() {
+            *b = 0xE0 | (i as u8);
+        }
+        let wire = build_send_disc_structure_write_data_key(&kwd);
+        assert_eq!(wire.len(), 20);
+        assert_eq!(wire[..4], [0x00, 0x12, 0x00, 0x00]);
+        assert_eq!(wire[4..], kwd);
+        assert_eq!(
+            parse_send_disc_structure_write_data_key(&wire).unwrap(),
+            kwd
+        );
+    }
+
+    #[test]
+    fn write_data_key_parameter_list_rejects_wrong_length_field() {
+        // Table 4-28 mandates the length field value 0x0012 for Format
+        // 0x84; any other value is a malformed parameter list.
+        let mut wire = vec![0x00, 0x22, 0x00, 0x00];
+        wire.resize(20, 0);
+        assert!(parse_send_disc_structure_write_data_key(&wire).is_err());
+    }
+
+    #[test]
+    fn write_data_key_parameter_list_rejects_truncated_payload() {
+        // Correct length field, but fewer than 20 total bytes.
+        let wire = [0x00, 0x12, 0x00, 0x00, 0xAA, 0xBB];
+        assert!(parse_send_disc_structure_write_data_key(&wire).is_err());
+    }
+
+    #[test]
+    fn mock_drive_send_write_data_key_static_mode_stores_wire_bytes() {
+        // Without `auth`, the wire bytes are adopted verbatim as the
+        // new Write Data Key; the Read Data Key is untouched.
+        let mut drive = MockDrive::with_test_fixture();
+        let old_krd = drive.read_data_key;
+        let mut new_kwd = [0u8; DATA_KEY_LEN];
+        for (i, b) in new_kwd.iter_mut().enumerate() {
+            *b = 0xF0 | (i as u8);
+        }
+        let cdb = SendDiscStructure::aacs_write_data_key(1).cdb();
+        let wire = build_send_disc_structure_write_data_key(&new_kwd);
+        let resp = drive
+            .execute(&cdb, DataDirection::ToDevice, &wire, 0)
+            .unwrap();
+        assert_eq!(resp.status, 0x00);
+        assert!(resp.data.is_empty());
+        assert_eq!(drive.write_data_key, new_kwd);
+        assert_eq!(drive.last_write_data_key_sent, Some(new_kwd));
+        assert_eq!(drive.read_data_key, old_krd);
+    }
+
+    #[test]
+    fn mock_drive_send_disc_structure_rejects_unknown_format() {
+        let mut drive = MockDrive::with_test_fixture();
+        let mut sds = SendDiscStructure::aacs_write_data_key(0);
+        sds.format = 0x87;
+        let wire = build_send_disc_structure_write_data_key(&[0u8; DATA_KEY_LEN]);
+        assert!(drive
+            .execute(&sds.cdb(), DataDirection::ToDevice, &wire, 0)
+            .is_err());
+    }
+
+    #[test]
+    fn mock_drive_send_disc_structure_rejects_wrong_direction() {
+        // A SEND DISC STRUCTURE dispatched as a FromDevice transfer is
+        // a caller bug; the drive state must remain untouched.
+        let mut drive = MockDrive::with_test_fixture();
+        let before = drive.write_data_key;
+        let cdb = SendDiscStructure::aacs_write_data_key(0).cdb();
+        let wire = build_send_disc_structure_write_data_key(&[0x55u8; DATA_KEY_LEN]);
+        assert!(drive
+            .execute(&cdb, DataDirection::FromDevice, &wire, 0)
+            .is_err());
+        assert_eq!(drive.write_data_key, before);
+        assert_eq!(drive.last_write_data_key_sent, None);
     }
 }

@@ -5,6 +5,43 @@ Content System) decryption layer used by Blu-ray Disc, per the
 publicly-published AACS LA technical specifications **Common Final
 0.953** (Oct 2012) and **BD-Prerecorded Final 0.953** (Oct 2012).
 
+Round 269 adds the **SEND DISC STRUCTURE (`0xBF`) Format `0x84` (Write
+Data Key)** host→drive sub-payload per AACS Common §4.14.5 Tables 4-26
+/ 4-27 and §4.14.5.1 Table 4-28 / MMC-6 §6.36.2.1 Table 572 +
+§6.36.3.2.11 Table 591 — the command a host uses to replace the
+drive's Write Data Key for §4.11 Bus Encryption of written sectors.
+This opens the SEND DISC STRUCTURE side of the MMC chain; the
+remaining Table 4-27 entry (Format `0x85`, Bus-Encryption Sector
+Extents ingest with the §4.14.5.2 sorted / non-overlapping / capacity
+validation rules) is the named next step.
+
+- **`SendDiscStructure`** — typed `0xBF` CDB builder (Media Type BD,
+  Format Code at byte 7, Parameter List Length at bytes 8..9
+  big-endian, AGID in bits 7..6 of byte 10, bytes 2..6 reserved per
+  Table 4-26) with `cdb()` / `parse_cdb()` inverses; constructor
+  **`SendDiscStructure::aacs_write_data_key(agid)`** sets the 20-byte
+  parameter list length.
+- **`build_send_disc_structure_write_data_key(kwd_encrypted)`** /
+  **`parse_send_disc_structure_write_data_key(buf)`** — the Table 4-28
+  parameter list `[length:u16=0x0012][reserved:u16][Kwd:16]`. The
+  Write Data Key travels encrypted by the Bus Key using AES-128E
+  (§4.14.5.1 paragraph 3); the parser rejects a non-`0x0012` length
+  field and truncated buffers.
+- **`SEND_DISC_STRUCTURE_OPCODE`** = `0xBF`,
+  **`FORMAT_AACS_WRITE_DATA_KEY`** = `0x84`.
+
+`MockDrive` gains a `SEND DISC STRUCTURE` dispatcher arm and a
+`last_write_data_key_sent` capture slot: in `auth` mode it unwraps the
+incoming key under the established Bus Key (AES-128D) into
+`write_data_key`, enforcing the §4.14.5.1 KEY NOT ESTABLISHED error
+when the AKE has not completed; in static mode the wire bytes are
+adopted verbatim. The Read Data Key is never touched, matching the
+§4.11 "Kwd defaults to Krd until the host overwrites it" lifecycle —
+the round-269 suite pins read-back coherence through READ DISC
+STRUCTURE Format `0x84` and runs one full §4.3 AKE handshake whose
+host-side Bus Key wraps a replacement Kwd that the drive's
+independently-derived Bus Key recovers.
+
 Round 246 adds the **READ DISC STRUCTURE Format `0x85` (Bus-Encryption
 Sector Extents)** sub-payload per AACS Common §4.14.3.6 Table 4-20 /
 MMC-6 §6.22.3.1.6 Table 389 — the LBA-Extent table the logical unit
