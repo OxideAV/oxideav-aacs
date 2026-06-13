@@ -394,6 +394,63 @@ impl Mkb {
         plaintext[..8] == VERIFY_MEDIA_KEY_SENTINEL
     }
 
+    /// Resolve the final Media Key from a candidate Media Key Precursor,
+    /// applying Key Conversion Data only when the spec requires it, per
+    /// the Common spec §3.2.5.1.4 verify-precursor-or-apply-KCD decision.
+    ///
+    /// Processing a Type-4 MKB with a KCD-equipped Device Key yields a
+    /// Media Key *Precursor* `K_mp` rather than the final Media Key. The
+    /// spec's resolution rule (§3.2.5.1.4 final paragraphs) is:
+    ///
+    /// 1. If the precursor `K_mp` *already* verifies against the Verify
+    ///    Media Key Record, then it is itself the correct Media Key
+    ///    `K_m`; the device "shall not apply the KCD data, even if it is
+    ///    a type of device that normally would use KCD data." (This
+    ///    happens with an old MKB into whose part of the tree the KCD
+    ///    data has not yet been incorporated.) The candidate is returned
+    ///    unchanged.
+    /// 2. Otherwise apply `K_m = AES-G(K_mp, KCD)` and verify that. On
+    ///    success the converted value is returned.
+    /// 3. If neither verifies, return
+    ///    [`AacsError::MediaKeyPrecursorResolutionFailed`].
+    ///
+    /// `kcd` is supplied externally (most commonly the `| KCD |` row of a
+    /// `KEYDB.cfg` file); AACS obtains it "by mechanisms that are
+    /// independent of the Media Key Block." This method centralises the
+    /// branch that the per-primitive
+    /// [`crate::subdiff::apply_key_conversion_data`] helper otherwise
+    /// leaves to the caller, so a caller cannot accidentally apply KCD to
+    /// a precursor that was already the final Media Key (which would
+    /// silently produce a wrong key).
+    ///
+    /// Returns [`AacsError::MissingVerifyMediaKeyRecord`] when the MKB
+    /// carries no `0x81` record (mandatory per §3.2.5.1.4, so this only
+    /// arises on a hand-built [`Mkb`]); the verification cannot proceed
+    /// without it.
+    pub fn resolve_media_key_with_kcd(
+        &self,
+        candidate_precursor: &[u8; 16],
+        kcd: &[u8; 16],
+    ) -> Result<[u8; 16], AacsError> {
+        // The Verify Media Key Record is mandatory; surface its absence
+        // rather than silently treating it as a verification failure, so
+        // the caller can distinguish a malformed MKB from a wrong key.
+        if self.verify_media_key.is_none() {
+            return Err(AacsError::MissingVerifyMediaKeyRecord);
+        }
+        // Step 1: the precursor may already be the final Media Key.
+        if self.is_verified_media_key(candidate_precursor) {
+            return Ok(*candidate_precursor);
+        }
+        // Step 2: apply KCD and re-verify.
+        let km = crate::subdiff::apply_key_conversion_data(candidate_precursor, kcd);
+        if self.is_verified_media_key(&km) {
+            return Ok(km);
+        }
+        // Step 3: neither value is the correct Media Key.
+        Err(AacsError::MediaKeyPrecursorResolutionFailed)
+    }
+
     /// MKB generation number from the leading Type-and-Version Record
     /// per Common spec §3.2.5.1.1 — see [`MkbType::generation`].
     ///
@@ -1058,6 +1115,86 @@ mod tests {
         let mut wrong = km;
         wrong[0] ^= 0x01;
         assert!(!mkb.is_verified_media_key(&wrong));
+    }
+
+    /// Build an MKB whose Verify Media Key Record matches `km`.
+    fn mkb_verifying(km: &[u8; 16]) -> Mkb {
+        use crate::aes::aes_128_ecb_encrypt;
+        let mut plaintext = [0u8; 16];
+        plaintext[..8].copy_from_slice(&VERIFY_MEDIA_KEY_SENTINEL);
+        // Trailing 8 bytes are arbitrary per §3.2.5.1.4; use a non-zero
+        // pattern to confirm only the high 64 bits are checked.
+        plaintext[8..].copy_from_slice(&[0xA5u8; 8]);
+        let vd = aes_128_ecb_encrypt(km, &plaintext);
+        Mkb {
+            verify_media_key: Some(vd),
+            ..Mkb::default()
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // §3.2.5.1.4 — resolve_media_key_with_kcd (verify-precursor-or-KCD)
+    // -----------------------------------------------------------------
+
+    /// Step 1: a precursor that already verifies as the Media Key must be
+    /// returned unchanged, WITHOUT applying KCD ("shall not apply the KCD
+    /// data, even if it is a type of device that normally would use it").
+    #[test]
+    fn resolve_kcd_returns_precursor_when_it_already_verifies() {
+        let km = [0x42u8; 16];
+        let mkb = mkb_verifying(&km);
+        // A wrong KCD would corrupt the key if it were (incorrectly)
+        // applied; the result must equal the original precursor.
+        let kcd = [0x99u8; 16];
+        let resolved = mkb.resolve_media_key_with_kcd(&km, &kcd).unwrap();
+        assert_eq!(
+            resolved, km,
+            "verifying precursor must pass through unchanged"
+        );
+        // Sanity: applying KCD here would have produced a different value.
+        let converted = crate::subdiff::apply_key_conversion_data(&km, &kcd);
+        assert_ne!(converted, km);
+    }
+
+    /// Step 2: a precursor that does NOT verify, but whose KCD-converted
+    /// value `AES-G(K_mp, KCD)` does, returns the converted Media Key.
+    #[test]
+    fn resolve_kcd_applies_conversion_when_precursor_does_not_verify() {
+        let kmp = [0x13u8; 16];
+        let kcd = [0x37u8; 16];
+        let km = crate::subdiff::apply_key_conversion_data(&kmp, &kcd);
+        // The verify record matches the CONVERTED key, not the precursor.
+        let mkb = mkb_verifying(&km);
+        assert!(
+            !mkb.is_verified_media_key(&kmp),
+            "precursor must not verify directly"
+        );
+        let resolved = mkb.resolve_media_key_with_kcd(&kmp, &kcd).unwrap();
+        assert_eq!(resolved, km, "must return AES-G(K_mp, KCD)");
+    }
+
+    /// Step 3: neither the precursor nor its KCD-conversion verifies.
+    #[test]
+    fn resolve_kcd_fails_when_neither_value_verifies() {
+        let km = [0x42u8; 16];
+        let mkb = mkb_verifying(&km);
+        let wrong_precursor = [0x01u8; 16];
+        let wrong_kcd = [0x02u8; 16];
+        assert!(matches!(
+            mkb.resolve_media_key_with_kcd(&wrong_precursor, &wrong_kcd),
+            Err(AacsError::MediaKeyPrecursorResolutionFailed)
+        ));
+    }
+
+    /// An MKB with no Verify Media Key Record cannot resolve — surface
+    /// the dedicated missing-record error, not a generic failure.
+    #[test]
+    fn resolve_kcd_errors_without_verify_record() {
+        let mkb = Mkb::default();
+        assert!(matches!(
+            mkb.resolve_media_key_with_kcd(&[0u8; 16], &[0u8; 16]),
+            Err(AacsError::MissingVerifyMediaKeyRecord)
+        ));
     }
 
     // -----------------------------------------------------------------

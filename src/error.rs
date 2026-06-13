@@ -47,6 +47,14 @@ pub enum AacsError {
     /// not pass the Verify Media Key check
     /// (`[AES-128D(Km, Vd)]_msb_64 != 0x0123456789ABCDEF`).
     MediaKeyVerificationFailed,
+    /// The Type-4 verify-precursor-or-apply-KCD resolution
+    /// ([`crate::mkb::Mkb::resolve_media_key_with_kcd`]) failed: neither
+    /// the candidate Media Key Precursor `K_mp` itself, nor the
+    /// KCD-converted value `K_m = AES-G(K_mp, KCD)`, passed the Verify
+    /// Media Key Record check (Common spec §3.2.5.1.4 final paragraphs).
+    /// The Device Key / MKB / KCD combination does not yield the correct
+    /// Media Key.
+    MediaKeyPrecursorResolutionFailed,
     /// The Subset-Difference walk could not find an applicable
     /// subset-difference for this Device Key — the device is revoked
     /// by this MKB (Common spec §3.2.4 final paragraph).
@@ -146,6 +154,9 @@ impl fmt::Display for AacsError {
             Self::MissingVerifyMediaKeyRecord => f.write_str("MKB has no Verify Media Key Record"),
             Self::MediaKeyVerificationFailed => {
                 f.write_str("Verify Media Key Record rejected the derived Media Key")
+            }
+            Self::MediaKeyPrecursorResolutionFailed => {
+                f.write_str("neither the Media Key Precursor nor its KCD-converted value verified")
             }
             Self::DeviceRevoked => f.write_str(
                 "no applicable subset-difference for this Device Key — device is revoked",

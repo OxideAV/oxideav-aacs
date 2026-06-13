@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 288 Type-4 verify-precursor-or-apply-KCD Media Key resolution (Common §3.2.5.1.4)
+
+`Mkb::resolve_media_key_with_kcd(candidate_precursor, kcd)` centralises
+the Common spec §3.2.5.1.4 decision a KCD-equipped device performs after
+the Subset-Difference walk, which (for a Type-4 MKB) yields a Media Key
+*Precursor* `K_mp` rather than the final Media Key:
+
+1. If `K_mp` *already* verifies against the Verify Media Key Record it is
+   itself the correct `K_m` and is returned unchanged — the device
+   "shall not apply the KCD data, even if it is a type of device that
+   normally would use KCD data" (e.g. an old MKB into whose part of the
+   tree the KCD has not yet been incorporated).
+2. Otherwise `K_m = AES-G(K_mp, KCD)` is computed and verified; on
+   success the converted value is returned.
+3. If neither verifies, the new
+   `AacsError::MediaKeyPrecursorResolutionFailed` is returned.
+
+Previously the per-primitive `subdiff::apply_key_conversion_data` helper
+left this branch to the caller (its doc comment told callers to "verify
+the precursor first, and only invoke `apply_key_conversion_data` if it
+doesn't verify"), which made it possible to apply KCD to a precursor that
+was already the final Media Key and silently derive a wrong key. The new
+method makes the spec branch un-skippable. Four unit tests pin the
+pass-through, the conversion, the dual-failure error, and the
+missing-Verify-Media-Key-Record path. Lib tests 181 → 185.
+
 ### Added — Round 277 SEND DISC STRUCTURE Format `0x85` Bus-Encryption Sector Extents (Common §4.14.5.2 Table 4-29)
 
 The SEND DISC STRUCTURE (`0xBF`) Format `0x85` sub-payload — the

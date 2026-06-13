@@ -5,7 +5,29 @@ Content System) decryption layer used by Blu-ray Disc, per the
 publicly-published AACS LA technical specifications **Common Final
 0.953** (Oct 2012) and **BD-Prerecorded Final 0.953** (Oct 2012).
 
-Round 277 adds the **SEND DISC STRUCTURE (`0xBF`) Format `0x85`
+Round 288 adds **`Mkb::resolve_media_key_with_kcd(precursor, kcd)`** —
+the Common spec §3.2.5.1.4 *verify-precursor-or-apply-KCD* decision a
+KCD-equipped device runs after the Subset-Difference walk. Processing a
+**Type-4** MKB with a KCD Device Key yields a Media Key *Precursor*
+`K_mp`, not the final Media Key. The spec rule:
+
+1. If `K_mp` *already* verifies against the Verify Media Key Record it
+   **is** the correct `K_m` and is returned unchanged — the device
+   "shall not apply the KCD data, even if it is a type of device that
+   normally would use KCD data" (an old MKB whose tree predates the
+   KCD).
+2. Otherwise `K_m = AES-G(K_mp, KCD)` is computed and verified; the
+   converted value is returned on success.
+3. If neither verifies → `AacsError::MediaKeyPrecursorResolutionFailed`.
+
+This centralises a branch the per-primitive
+`subdiff::apply_key_conversion_data` helper previously left to callers
+(making it possible to apply KCD to a precursor that was already the
+final Media Key and silently derive a wrong key); the method makes the
+spec branch un-skippable. Four unit tests pin all three legs plus the
+no-Verify-Media-Key-Record path.
+
+Round 277 added the **SEND DISC STRUCTURE (`0xBF`) Format `0x85`
 (Bus-Encryption Sector Extents)** host→drive ingest per AACS Common
 §4.14.5.2 Table 4-29 — the command a host uses to establish the sector
 ranges whose Bus Encryption Flag shall be set when data is written.
