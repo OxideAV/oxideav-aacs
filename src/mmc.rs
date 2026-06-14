@@ -1730,6 +1730,335 @@ pub fn validate_bus_encryption_sector_extents(
 }
 
 // ---------------------------------------------------------------------
+// GET CONFIGURATION (0x46) + AACS Feature Descriptor (Feature 0x010D)
+// ---------------------------------------------------------------------
+
+/// SCSI MMC `GET CONFIGURATION` opcode (MMC-6 §6.5.1.1 Table 256).
+///
+/// Unlike the four AACS Key-Class / Disc-Structure commands, GET
+/// CONFIGURATION is a **10-byte** CDB (SPC-3 group-1 fixed CDB), so it
+/// does not share the [`MMC_CDB_LEN`] (12-byte) frame used by REPORT KEY
+/// / SEND KEY / READ DISC STRUCTURE / SEND DISC STRUCTURE.
+pub const GET_CONFIGURATION_OPCODE: u8 = 0x46;
+
+/// Fixed length of the GET CONFIGURATION CDB (MMC-6 §6.5.1.1 Table 256 —
+/// a 10-byte SPC-3 group-1 CDB).
+pub const GET_CONFIGURATION_CDB_LEN: usize = 10;
+
+/// Feature Code `0x010D`: **AACS** — "Ability to perform AACS
+/// authentication" (MMC-6 §5.2.3 Table 89; AACS Common §4.14.1 Table
+/// 4-3). The descriptor body is defined by AACS Common Table 4-4.
+pub const FEATURE_AACS: u16 = 0x010D;
+
+/// GET CONFIGURATION RT field `00b`: return the Feature Header and **all**
+/// Feature Descriptors the drive supports, regardless of currency (MMC-6
+/// §6.5.1.2 Table 257).
+pub const GET_CONFIG_RT_ALL: u8 = 0x00;
+/// GET CONFIGURATION RT field `01b`: return only the Feature Descriptors
+/// whose Current bit is set (MMC-6 §6.5.1.2 Table 257).
+pub const GET_CONFIG_RT_CURRENT: u8 = 0x01;
+/// GET CONFIGURATION RT field `10b`: return the Feature Header plus the
+/// single Feature Descriptor named by Starting Feature Number (MMC-6
+/// §6.5.1.2 Table 257). The host uses this with
+/// `starting_feature = `[`FEATURE_AACS`] to fetch just the AACS
+/// descriptor.
+pub const GET_CONFIG_RT_ONE: u8 = 0x02;
+
+/// 8-byte Feature Header preceding the Feature Descriptor list in a GET
+/// CONFIGURATION response (MMC-6 §5.2.1 Table 87).
+pub const FEATURE_HEADER_LEN: usize = 8;
+
+/// Typed builder for the `GET CONFIGURATION` (`0x46`) CDB.
+///
+/// Per MMC-6 §6.5.1.1 Table 256 the CDB layout is:
+///
+/// ```text
+///  Byte 0   : Operation Code (0x46)
+///  Byte 1   : Reserved [7..2] | RT [1..0]
+///  Bytes 2-3: Starting Feature Number (big-endian)
+///  Bytes 4-6: Reserved
+///  Bytes 7-8: Allocation Length (big-endian)
+///  Byte 9   : Control
+/// ```
+///
+/// The host discovers AACS support by issuing this command with
+/// [`GetConfiguration::aacs_feature`] and parsing the returned descriptor
+/// with [`parse_aacs_feature_descriptor`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GetConfiguration {
+    /// RT field (low 2 bits of byte 1) — [`GET_CONFIG_RT_ALL`],
+    /// [`GET_CONFIG_RT_CURRENT`], or [`GET_CONFIG_RT_ONE`].
+    pub rt: u8,
+    /// Starting Feature Number (bytes 2..3, big-endian).
+    pub starting_feature: u16,
+    /// Allocation length in bytes the host will accept (bytes 7..8,
+    /// big-endian).
+    pub allocation_length: u16,
+    /// SAM-3 control byte (byte 9) — typically `0x00`.
+    pub control: u8,
+}
+
+impl GetConfiguration {
+    /// Constructor for the AACS Feature query: RT `10b` (return only the
+    /// requested descriptor) with Starting Feature Number
+    /// [`FEATURE_AACS`]. The allocation length is sized for the 8-byte
+    /// Feature Header plus the 8-byte AACS Feature Descriptor (4-byte
+    /// descriptor header + 4-byte Feature Dependent Data per AACS Common
+    /// Table 4-4) = 16 bytes.
+    pub fn aacs_feature() -> Self {
+        Self {
+            rt: GET_CONFIG_RT_ONE,
+            starting_feature: FEATURE_AACS,
+            allocation_length: (FEATURE_HEADER_LEN + AACS_FEATURE_DESCRIPTOR_LEN) as u16,
+            control: 0,
+        }
+    }
+
+    /// Serialize this CDB into 10 bytes per MMC-6 Table 256.
+    pub fn cdb(&self) -> [u8; GET_CONFIGURATION_CDB_LEN] {
+        let mut cdb = [0u8; GET_CONFIGURATION_CDB_LEN];
+        cdb[0] = GET_CONFIGURATION_OPCODE;
+        cdb[1] = self.rt & 0x03;
+        cdb[2] = (self.starting_feature >> 8) as u8;
+        cdb[3] = self.starting_feature as u8;
+        // bytes 4..6 Reserved.
+        cdb[7] = (self.allocation_length >> 8) as u8;
+        cdb[8] = self.allocation_length as u8;
+        cdb[9] = self.control;
+        cdb
+    }
+
+    /// Inverse of [`GetConfiguration::cdb`]. Returns
+    /// [`AacsError::InvalidValue`] when the opcode byte is not `0x46`.
+    pub fn parse_cdb(cdb: &[u8; GET_CONFIGURATION_CDB_LEN]) -> Result<Self, AacsError> {
+        if cdb[0] != GET_CONFIGURATION_OPCODE {
+            return Err(AacsError::InvalidValue {
+                what: "GET_CONFIGURATION opcode",
+                value: cdb[0] as u64,
+            });
+        }
+        Ok(Self {
+            rt: cdb[1] & 0x03,
+            starting_feature: ((cdb[2] as u16) << 8) | (cdb[3] as u16),
+            allocation_length: ((cdb[7] as u16) << 8) | (cdb[8] as u16),
+            control: cdb[9],
+        })
+    }
+}
+
+/// Total on-wire length of the AACS Feature Descriptor: the 4-byte
+/// generic Feature Descriptor header (Feature Code + Version/Persistent/
+/// Current + Additional Length) plus the 4-byte AACS Feature Dependent
+/// Data (AACS Common §4.14.1 Table 4-4, bytes 0..7).
+pub const AACS_FEATURE_DESCRIPTOR_LEN: usize = 8;
+
+/// The fixed `Additional Length` value of the AACS Feature Descriptor —
+/// 4 bytes of Feature Dependent Data follow the generic 4-byte header
+/// (AACS Common §4.14.1 Table 4-4: `Additional Length = 04h`).
+pub const AACS_FEATURE_ADDITIONAL_LENGTH: u8 = 0x04;
+
+/// The Version field value of the AACS Feature Descriptor. AACS Common
+/// §4.14.1 mandates `Version = 0010b`, occupying bits 5..2 of the generic
+/// Feature Descriptor byte 2.
+pub const AACS_FEATURE_VERSION: u8 = 0b0010;
+
+/// The AACS version field value (Table 4-4 byte 7): AACS Common §4.14.1
+/// mandates `AACS version = 01h`.
+pub const AACS_FEATURE_AACS_VERSION: u8 = 0x01;
+
+/// Decoded **AACS Feature Descriptor** (AACS Common §4.14.1 Table 4-4 /
+/// MMC-6 §5.2.2 Feature Descriptor generic format).
+///
+/// A logical unit that supports AACS authentication advertises this
+/// descriptor in its GET CONFIGURATION response. The capability bits
+/// live in the Feature Dependent Data (Table 4-4 byte 4).
+///
+/// > **Trust note.** AACS Common §4.14.1 instructs the PC Host **not** to
+/// > trust the [`bus_encryption_capable`](Self::bus_encryption_capable)
+/// > (BEC) or [`write_bus_encryption`](Self::write_bus_encryption) (WBE)
+/// > bits from this descriptor — the host must instead read the BEC bit
+/// > from the signed Drive Certificate. These fields are surfaced for
+/// > completeness, not as an authorisation source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AacsFeatureDescriptor {
+    /// `Current` bit (generic descriptor byte 2 bit 0). When set, AACS
+    /// is currently active (an AACS-compliant medium is loaded) and the
+    /// Feature Dependent Data is valid (MMC-6 §5.2.2.4; AACS Common
+    /// §4.14.1).
+    pub current: bool,
+    /// `Persistent` bit (generic descriptor byte 2 bit 1) — when set the
+    /// Feature is always active (MMC-6 §5.2.2.3).
+    pub persistent: bool,
+    /// `Version` field (generic descriptor byte 2 bits 5..2). AACS Common
+    /// §4.14.1 mandates [`AACS_FEATURE_VERSION`] (`0010b`).
+    pub version: u8,
+    /// **RDC** — Read Drive Certificate (Table 4-4 byte 4 bit 7). Set
+    /// when the drive supports reading its Drive Certificate via REPORT
+    /// KEY Key Format `111000b`.
+    pub read_drive_certificate: bool,
+    /// **RMC** — Return MKB of CPRM (Table 4-4 byte 4 bit 6). Set when
+    /// the drive can transfer the CPRM Media Key Block via READ DISC
+    /// STRUCTURE Format Code `0x86`.
+    pub return_mkb_of_cprm: bool,
+    /// **WBE** — Write Bus Encryption (Table 4-4 byte 4 bit 5). Set when
+    /// the drive supports Bus Encryption and supports writing. Not to be
+    /// trusted by the host (see the struct-level note).
+    pub write_bus_encryption: bool,
+    /// **BEC** — Bus Encryption Capable (Table 4-4 byte 4 bit 4). Set
+    /// when the drive supports Bus Encryption. Not to be trusted by the
+    /// host (see the struct-level note).
+    pub bus_encryption_capable: bool,
+    /// **BNG** — Binding Nonce Generation (Table 4-4 byte 4 bit 0). Set
+    /// when Binding Nonce generation is supported (REPORT KEY Key Format
+    /// `100000b` is then also supported).
+    pub binding_nonce_generation: bool,
+    /// Block Count for Binding Nonce (Table 4-4 byte 5) — how many blocks
+    /// are required to store the Binding Nonce for the media.
+    pub block_count_for_binding_nonce: u8,
+    /// Number of AGIDs (Table 4-4 byte 6 bits 2..0) — the maximum number
+    /// of AGIDs the logical unit supports concurrently.
+    pub number_of_agids: u8,
+    /// AACS version (Table 4-4 byte 7). AACS Common §4.14.1 mandates
+    /// [`AACS_FEATURE_AACS_VERSION`] (`01h`).
+    pub aacs_version: u8,
+}
+
+impl AacsFeatureDescriptor {
+    /// Serialize this descriptor into its 8-byte on-wire form (AACS
+    /// Common §4.14.1 Table 4-4 / MMC-6 §5.2.2 generic format). Bytes
+    /// 0..1 carry the Feature Code [`FEATURE_AACS`] (big-endian); byte 2
+    /// packs `Version` (bits 5..2), `Persistent` (bit 1), `Current`
+    /// (bit 0); byte 3 is the `Additional Length`
+    /// ([`AACS_FEATURE_ADDITIONAL_LENGTH`]); bytes 4..7 are the Feature
+    /// Dependent Data.
+    pub fn to_bytes(&self) -> [u8; AACS_FEATURE_DESCRIPTOR_LEN] {
+        let mut out = [0u8; AACS_FEATURE_DESCRIPTOR_LEN];
+        out[0] = (FEATURE_AACS >> 8) as u8;
+        out[1] = FEATURE_AACS as u8;
+        out[2] =
+            ((self.version & 0x0F) << 2) | ((self.persistent as u8) << 1) | (self.current as u8);
+        out[3] = AACS_FEATURE_ADDITIONAL_LENGTH;
+        out[4] = ((self.read_drive_certificate as u8) << 7)
+            | ((self.return_mkb_of_cprm as u8) << 6)
+            | ((self.write_bus_encryption as u8) << 5)
+            | ((self.bus_encryption_capable as u8) << 4)
+            | (self.binding_nonce_generation as u8);
+        out[5] = self.block_count_for_binding_nonce;
+        out[6] = self.number_of_agids & 0x07;
+        out[7] = self.aacs_version;
+        out
+    }
+}
+
+/// Parse one **AACS Feature Descriptor** out of an 8-byte slice (the
+/// generic 4-byte Feature Descriptor header + the 4-byte AACS Feature
+/// Dependent Data, AACS Common §4.14.1 Table 4-4).
+///
+/// Returns [`AacsError::Truncated`] when fewer than
+/// [`AACS_FEATURE_DESCRIPTOR_LEN`] bytes are present, and
+/// [`AacsError::InvalidValue`] when the Feature Code is not
+/// [`FEATURE_AACS`] or the Additional Length is not
+/// [`AACS_FEATURE_ADDITIONAL_LENGTH`] (`04h`, which the spec fixes for
+/// this descriptor). The `Version` and `AACS version` fields are decoded
+/// verbatim rather than validated, since a forward-compatible drive may
+/// report values the host should tolerate.
+pub fn parse_aacs_feature_descriptor(buf: &[u8]) -> Result<AacsFeatureDescriptor, AacsError> {
+    if buf.len() < AACS_FEATURE_DESCRIPTOR_LEN {
+        return Err(AacsError::Truncated("AACS Feature Descriptor"));
+    }
+    let feature_code = ((buf[0] as u16) << 8) | (buf[1] as u16);
+    if feature_code != FEATURE_AACS {
+        return Err(AacsError::InvalidValue {
+            what: "AACS Feature Descriptor Feature Code",
+            value: feature_code as u64,
+        });
+    }
+    if buf[3] != AACS_FEATURE_ADDITIONAL_LENGTH {
+        return Err(AacsError::InvalidValue {
+            what: "AACS Feature Descriptor Additional Length",
+            value: buf[3] as u64,
+        });
+    }
+    Ok(AacsFeatureDescriptor {
+        current: buf[2] & 0x01 != 0,
+        persistent: buf[2] & 0x02 != 0,
+        version: (buf[2] >> 2) & 0x0F,
+        read_drive_certificate: buf[4] & 0x80 != 0,
+        return_mkb_of_cprm: buf[4] & 0x40 != 0,
+        write_bus_encryption: buf[4] & 0x20 != 0,
+        bus_encryption_capable: buf[4] & 0x10 != 0,
+        binding_nonce_generation: buf[4] & 0x01 != 0,
+        block_count_for_binding_nonce: buf[5],
+        number_of_agids: buf[6] & 0x07,
+        aacs_version: buf[7],
+    })
+}
+
+/// Locate and parse the AACS Feature Descriptor inside a full GET
+/// CONFIGURATION response (the 8-byte Feature Header followed by zero or
+/// more variable-length Feature Descriptors, MMC-6 §5.2.1 Table 86).
+///
+/// The function skips the Feature Header, then walks the descriptor list
+/// — each descriptor is `4 + Additional Length` bytes (MMC-6 §5.2.2,
+/// `Additional Length` an integral multiple of 4) — until it finds the
+/// one whose Feature Code is [`FEATURE_AACS`], which it parses with
+/// [`parse_aacs_feature_descriptor`].
+///
+/// Returns:
+/// - `Ok(Some(descriptor))` when an AACS Feature Descriptor is present,
+/// - `Ok(None)` when the response is well-formed but carries no AACS
+///   descriptor (a non-AACS drive),
+/// - [`AacsError::Truncated`] when the Feature Header or a descriptor
+///   header runs past the end of the buffer.
+pub fn find_aacs_feature_descriptor(
+    response: &[u8],
+) -> Result<Option<AacsFeatureDescriptor>, AacsError> {
+    if response.len() < FEATURE_HEADER_LEN {
+        return Err(AacsError::Truncated("GET CONFIGURATION Feature Header"));
+    }
+    let mut offset = FEATURE_HEADER_LEN;
+    while offset + 4 <= response.len() {
+        let feature_code = ((response[offset] as u16) << 8) | (response[offset + 1] as u16);
+        let additional_length = response[offset + 3] as usize;
+        let descriptor_len = 4 + additional_length;
+        if offset + descriptor_len > response.len() {
+            return Err(AacsError::Truncated("GET CONFIGURATION Feature Descriptor"));
+        }
+        if feature_code == FEATURE_AACS {
+            return Ok(Some(parse_aacs_feature_descriptor(
+                &response[offset..offset + descriptor_len],
+            )?));
+        }
+        offset += descriptor_len;
+    }
+    Ok(None)
+}
+
+/// Build a complete minimal GET CONFIGURATION response (8-byte Feature
+/// Header + one AACS Feature Descriptor) for a synthetic drive or for
+/// `find_aacs_feature_descriptor` round-trip tests.
+///
+/// The Feature Header's Data Length (MMC-6 §5.2.1 Table 87, bytes 0..3
+/// big-endian) counts everything **after** the Data Length field itself —
+/// i.e. `4 (rest of header) + 8 (descriptor) = 12`. The Current Profile
+/// field (bytes 6..7) is set to `current_profile`.
+pub fn build_get_configuration_aacs_response(
+    descriptor: &AacsFeatureDescriptor,
+    current_profile: u16,
+) -> Vec<u8> {
+    let body = descriptor.to_bytes();
+    // Data Length counts the 4 trailing header bytes + the descriptor.
+    let data_length = (FEATURE_HEADER_LEN - 4 + body.len()) as u32;
+    let mut out = Vec::with_capacity(FEATURE_HEADER_LEN + body.len());
+    out.extend_from_slice(&data_length.to_be_bytes());
+    out.push(0); // byte 4 Reserved
+    out.push(0); // byte 5 Reserved
+    out.extend_from_slice(&current_profile.to_be_bytes());
+    out.extend_from_slice(&body);
+    out
+}
+
+// ---------------------------------------------------------------------
 // DriveCommand trait + mock drive
 // ---------------------------------------------------------------------
 

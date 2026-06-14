@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 299 GET CONFIGURATION (`0x46`) + AACS Feature Descriptor (Feature `0x010D`, Common §4.14.1 Table 4-4)
+
+The host's capability-discovery path: before issuing any AACS command a
+PC Host issues `GET CONFIGURATION` to confirm the logical unit
+implements the AACS Feature (Feature Code `0x010D`) and to read the
+drive's AACS capability bits. This was the named gap in
+`docs/container/aacs/mmc/aacs-keyclass-02-wire-format.md` §6 (the only
+fully-specified AACS-over-MMC command the crate did not yet model).
+
+- **`GetConfiguration`** — typed builder for the 10-byte `GET
+  CONFIGURATION` CDB (opcode `0x46`, RT field byte 1 bits 1..0, Starting
+  Feature Number bytes 2..3 big-endian, Allocation Length bytes 7..8
+  big-endian) with `cdb()` / `parse_cdb()` inverses per MMC-6 §6.5.1.1
+  Table 256. Constructor **`GetConfiguration::aacs_feature()`** sets
+  RT = `10b` and Starting Feature Number = `0x010D`. Unlike the four
+  AACS Key-Class / Disc-Structure commands this is a *10-byte* CDB, so
+  it does not share the 12-byte `MMC_CDB_LEN` frame;
+  `GET_CONFIGURATION_CDB_LEN` = `10`.
+- **`AacsFeatureDescriptor`** + **`to_bytes()`** /
+  **`parse_aacs_feature_descriptor(buf)`** — the 8-byte descriptor
+  (generic 4-byte Feature Descriptor header — Feature Code `0x010D`,
+  `Version 0010b`, Persistent/Current bits, `Additional Length 04h` —
+  plus the 4-byte Feature Dependent Data) per AACS Common §4.14.1
+  Table 4-4 / MMC-6 §5.2.2. Byte 4 decodes the RDC / RMC / WBE / BEC /
+  BNG capability flags; byte 5 the Block Count for Binding Nonce; byte 6
+  the Number of AGIDs (3-bit); byte 7 the AACS version (`01h`). The
+  struct doc records the §4.14.1 trust rule (the host must read BEC/WBE
+  from the *signed Drive Certificate*, not this descriptor).
+- **`find_aacs_feature_descriptor(response)`** — walks a full GET
+  CONFIGURATION response (8-byte Feature Header + variable-length
+  descriptors, each `4 + Additional Length` bytes per MMC-6 §5.2.1
+  Tables 86–88) and returns the AACS descriptor, `None` for a non-AACS
+  drive, or `Truncated` on a short buffer / over-running descriptor.
+- **`build_get_configuration_aacs_response(descriptor, current_profile)`**
+  — mints a minimal well-formed response (Feature Header with the
+  count-after-itself Data Length + one AACS descriptor) for round-trip
+  tests.
+
+Named constants `GET_CONFIGURATION_OPCODE` (`0x46`), `FEATURE_AACS`
+(`0x010D`), `GET_CONFIG_RT_ALL` / `GET_CONFIG_RT_CURRENT` /
+`GET_CONFIG_RT_ONE`, `FEATURE_HEADER_LEN`, `AACS_FEATURE_DESCRIPTOR_LEN`,
+`AACS_FEATURE_ADDITIONAL_LENGTH`, `AACS_FEATURE_VERSION`,
+`AACS_FEATURE_AACS_VERSION`. New integration suite
+`tests/synth_round299_get_configuration.rs` (17 cases) pins the CDB +
+descriptor byte layout, both inverse round-trips, the all-flags-set /
+all-flags-clear cases, the 3-bit Number-of-AGIDs masking, the
+Feature-list walk (including skipping a leading non-AACS descriptor and
+the `None`-when-absent path), and every rejection (wrong opcode / wrong
+Feature Code / wrong Additional Length / truncated header / over-running
+descriptor).
+
 ### Added — Round 288 Type-4 verify-precursor-or-apply-KCD Media Key resolution (Common §3.2.5.1.4)
 
 `Mkb::resolve_media_key_with_kcd(candidate_precursor, kcd)` centralises

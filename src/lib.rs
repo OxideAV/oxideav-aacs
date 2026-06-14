@@ -83,20 +83,21 @@ pub use crate::mkb::{
     Mkb, MkbType, RevocationEntry, RevocationSignatureBlock, SubsetDifferenceEntry,
 };
 pub use crate::mmc::{
-    build_send_disc_structure_bus_encryption_sector_extents,
+    build_get_configuration_aacs_response, build_send_disc_structure_bus_encryption_sector_extents,
     build_send_disc_structure_write_data_key, build_send_key_host_cert_chal,
-    build_send_key_host_key, parse_bus_encryption_sector_extents_response,
-    parse_data_keys_response, parse_media_id_response, parse_media_serial_response,
-    parse_mkb_pack_response, parse_report_key_agid, parse_report_key_binding_nonce,
-    parse_report_key_drive_cert, parse_report_key_drive_cert_chal, parse_report_key_drive_key,
+    build_send_key_host_key, find_aacs_feature_descriptor, parse_aacs_feature_descriptor,
+    parse_bus_encryption_sector_extents_response, parse_data_keys_response,
+    parse_media_id_response, parse_media_serial_response, parse_mkb_pack_response,
+    parse_report_key_agid, parse_report_key_binding_nonce, parse_report_key_drive_cert,
+    parse_report_key_drive_cert_chal, parse_report_key_drive_key,
     parse_send_disc_structure_bus_encryption_sector_extents,
     parse_send_disc_structure_write_data_key, parse_send_key_host_cert_chal,
     parse_send_key_host_key, parse_volume_id_response, validate_bus_encryption_sector_extents,
-    AgidResponse, BindingNonceResponse, BusEncryptionSectorExtent,
+    AacsFeatureDescriptor, AgidResponse, BindingNonceResponse, BusEncryptionSectorExtent,
     BusEncryptionSectorExtentsResponse, DataDirection, DataKeysResponse,
     DriveCertChallengeResponse, DriveCertResponse, DriveCommand, DriveKeyResponse,
-    MediaIdentifierResponse, MediaSerialNumberResponse, MkbPackResponse, ReadDiscStructure,
-    ReportKey, ScsiResponse, SendDiscStructure, SendKey, VolumeIdResponse,
+    GetConfiguration, MediaIdentifierResponse, MediaSerialNumberResponse, MkbPackResponse,
+    ReadDiscStructure, ReportKey, ScsiResponse, SendDiscStructure, SendKey, VolumeIdResponse,
 };
 // `MockDrive` is a `test-util`-gated synthetic-drive fixture, not part of
 // the default public API. See the `test-util` cargo feature.

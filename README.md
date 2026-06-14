@@ -5,6 +5,39 @@ Content System) decryption layer used by Blu-ray Disc, per the
 publicly-published AACS LA technical specifications **Common Final
 0.953** (Oct 2012) and **BD-Prerecorded Final 0.953** (Oct 2012).
 
+Round 299 adds the **`GET CONFIGURATION` (`0x46`) command + the AACS
+Feature Descriptor (Feature Code `0x010D`)** per AACS Common §4.14.1
+Table 4-4 and MMC-6 §6.5 (Table 256) / §5.2 (Tables 86–88) — the
+capability-discovery handshake a PC Host runs **before** any AACS
+command to confirm the logical unit implements the AACS Feature and to
+read its capability bits. This was the last fully-specified
+AACS-over-MMC command the crate did not model (the §6 entry in
+`docs/container/aacs/mmc/aacs-keyclass-02-wire-format.md`).
+
+- **`GetConfiguration`** — typed builder for the 10-byte `0x46` CDB (RT
+  field, Starting Feature Number big-endian, Allocation Length
+  big-endian) with `cdb()` / `parse_cdb()` inverses;
+  **`GetConfiguration::aacs_feature()`** queries Feature `0x010D` with
+  RT = `10b`. This is a *10-byte* CDB (`GET_CONFIGURATION_CDB_LEN`), not
+  the 12-byte frame the AACS Key-Class / Disc-Structure commands share.
+- **`AacsFeatureDescriptor`** + **`to_bytes()`** /
+  **`parse_aacs_feature_descriptor`** — the 8-byte descriptor (Feature
+  Code `0x010D`, `Version 0010b`, Persistent/Current, `Additional
+  Length 04h`, then byte 4 RDC/RMC/WBE/BEC/BNG flags, byte 5 Block Count
+  for Binding Nonce, byte 6 Number of AGIDs, byte 7 AACS version `01h`).
+  The struct records the §4.14.1 trust rule: the host must read BEC/WBE
+  from the *signed Drive Certificate*, never this descriptor.
+- **`find_aacs_feature_descriptor`** — walks a full GET CONFIGURATION
+  response (8-byte Feature Header + variable descriptors) to the AACS
+  entry, returning `None` for a non-AACS drive; and
+  **`build_get_configuration_aacs_response`** mints a well-formed
+  response for round-trip tests.
+
+A 17-case suite (`tests/synth_round299_get_configuration.rs`) pins the
+CDB + descriptor byte layout, both inverse round-trips, the
+all-flags-set / all-flags-clear cases, the 3-bit Number-of-AGIDs
+masking, the Feature-list walk, and every rejection path.
+
 Round 288 adds **`Mkb::resolve_media_key_with_kcd(precursor, kcd)`** —
 the Common spec §3.2.5.1.4 *verify-precursor-or-apply-KCD* decision a
 KCD-equipped device runs after the Subset-Difference walk. Processing a
