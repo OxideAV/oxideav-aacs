@@ -154,6 +154,28 @@ pub const FORMAT_AACS_BUS_ENCRYPTION_SECTOR_EXTENTS: u8 = 0x85;
 /// carries only the host's replacement Write Data Key (encrypted under
 /// the Bus Key with AES-128E).
 pub const FORMAT_AACS_WRITE_DATA_KEY: u8 = 0x84;
+/// READ DISC STRUCTURE Format Code `0x86`: Media Key Block of CPRM
+/// recorded in the Lead-in Area of AACS Recordable Media (MMC-6
+/// §6.22.3 Table 383; AACS Common §4.14.3.7 Table 4-21). Unlike the
+/// AACS MKB (Format `0x83`, self-protected) the CPRM MKB's *first*
+/// pack is transferred under the AACS authentication process: the
+/// drive replaces the first 16 bytes of the first pack with
+/// `CMAC(BK, MKB_Hash)` (§4.14.3.7 final paragraph).
+pub const FORMAT_AACS_CPRM_MEDIA_KEY_BLOCK: u8 = 0x86;
+
+/// Length of a single MEDIA KEY BLOCK Pack for the CPRM MKB (Format
+/// `0x86`): 24,576 bytes (AACS Common §4.14.3.7 — "The MEDIA KEY BLOCK
+/// Pack Data length is 24,576 and the DISC STRUCTURE Data Length is
+/// `0x6002`"). The DISC STRUCTURE Data Length value `0x6002` counts the
+/// 2 header bytes after itself (`reserved:u8 || total_packs:u8`) plus
+/// the 24,576-byte pack body.
+pub const CPRM_MKB_PACK_LEN: usize = 24_576;
+
+/// CDB Address sentinel for the CPRM MKB (Format `0x86`): requesting
+/// Address `0x000000FF` returns only the 4-byte DISC STRUCTURE header
+/// (length `0x0002`, no pack body), letting the host read `Total Packs`
+/// without AACS authentication (AACS Common §4.14.3.7 paragraph 3).
+pub const CPRM_MKB_HEADER_ONLY_ADDRESS: u32 = 0x0000_00FF;
 
 /// READ DISC STRUCTURE Media Type `0001b`: BD (MMC-6 Table 382).
 pub const MEDIA_TYPE_BD: u8 = 0x01;
@@ -696,6 +718,32 @@ impl ReadDiscStructure {
         }
     }
 
+    /// Constructor for a CPRM Media Key Block pack read (Format
+    /// `0x86`, AACS Common §4.14.3.7 Table 4-21). The `pack_number`
+    /// argument goes into the `Address` field; the first pack is
+    /// `0x00000000` and the nth pack is `n-1`. The first pack
+    /// (Address `0`) is transferred under the AACS authentication
+    /// process — the host must supply a valid `agid` and the drive
+    /// replaces the first 16 bytes with `CMAC(BK, MKB_Hash)`. The
+    /// sentinel Address [`CPRM_MKB_HEADER_ONLY_ADDRESS`]
+    /// (`0x000000FF`) returns only the 4-byte header (Total Packs
+    /// query) and requires no authentication. `layer` is reserved for
+    /// this Format Code (Table 4-21 has no Layer field, unlike the
+    /// AACS MKB Format `0x83`); it is encoded into the Layer Number
+    /// byte for round-trip fidelity but the drive ignores it.
+    pub fn aacs_cprm_media_key_block_pack(agid: u8, pack_number: u32) -> Self {
+        Self {
+            media_type: MEDIA_TYPE_BD,
+            address: pack_number,
+            layer_number: 0,
+            format: FORMAT_AACS_CPRM_MEDIA_KEY_BLOCK,
+            // 4-byte header + one 24,576-byte CPRM MKB pack.
+            allocation_length: (4 + CPRM_MKB_PACK_LEN) as u16,
+            agid: agid & 0x03,
+            control: 0,
+        }
+    }
+
     /// Serialize this CDB into 12 bytes per MMC-6 Table 381.
     pub fn cdb(&self) -> [u8; MMC_CDB_LEN] {
         let mut cdb = [0u8; MMC_CDB_LEN];
@@ -978,6 +1026,48 @@ pub struct MkbPackResponse {
     pub total_packs: u8,
     /// MKB pack data, up to 32,768 bytes. The last pack may end with
     /// zero-padding.
+    pub pack_data: Vec<u8>,
+}
+
+/// Decoded CPRM Media Key Block pack response (READ DISC STRUCTURE
+/// Format `0x86`; AACS Common §4.14.3.7 Table 4-21).
+///
+/// Wire layout (per Table 4-21):
+///
+/// ```text
+///  Byte    | Field
+///  0..1    | DISC STRUCTURE Data Length (0x6002 for a full pack;
+///          | 0x0002 when Address = 0x000000FF, header-only)
+///  2       | Reserved
+///  3       | Total Packs
+///  4..N    | MEDIA KEY BLOCK Pack Data (24,576 bytes, or empty when
+///          | header-only)
+/// ```
+///
+/// `total_packs` is the ceiling of the total CPRM-MKB data length
+/// divided by 24,576. For the *first* pack (CDB Address = 0) the drive
+/// has replaced the first 16 bytes of `pack_data` with a message
+/// authentication code `CMAC(BK, MKB_Hash)` over the MKB Hash, computed
+/// under the Bus Key established by the §4.3 AKE (§4.14.3.7 final
+/// paragraph). For all other packs `pack_data` is the verbatim
+/// Lead-in MKB bytes. A header-only query (Address `0x000000FF`)
+/// yields `pack_data` empty.
+///
+/// Unlike the AACS MKB (Format `0x83`, self-protected), the CPRM MKB
+/// requires AACS authentication to transfer its first pack — the host
+/// can still read `total_packs` without authentication by issuing the
+/// header-only query.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CprmMkbPackResponse {
+    /// Total number of CPRM-MKB packs the drive can return for this
+    /// disc (ceiling of `CPRM-MKB-data-length / 24,576`). Packs are
+    /// addressed by `pack_number = 0..total_packs - 1` via the
+    /// `Address` field of the [`ReadDiscStructure`] CDB.
+    pub total_packs: u8,
+    /// CPRM MKB pack data, 24,576 bytes for a full pack or empty for a
+    /// header-only (`Address = 0x000000FF`) query. For pack 0 the
+    /// first 16 bytes are `CMAC(BK, MKB_Hash)` rather than the verbatim
+    /// MKB Descriptor.
     pub pack_data: Vec<u8>,
 }
 
@@ -1425,6 +1515,51 @@ pub fn parse_mkb_pack_response(buf: &[u8]) -> Result<MkbPackResponse, AacsError>
     let total_packs = buf[3];
     let pack_data = buf[4..4 + body_len].to_vec();
     Ok(MkbPackResponse {
+        total_packs,
+        pack_data,
+    })
+}
+
+/// Parse the response payload for `READ_DISC_STRUCTURE` Format `0x86`
+/// (CPRM Media Key Block pack) per AACS Common §4.14.3.7 Table 4-21.
+///
+/// Wire layout: `[length:u16][reserved:u8][total_packs:u8]
+/// [pack_data: 24,576 bytes | empty]`. The two-byte `length` field
+/// measures everything after itself: `0x6002` for a full pack (2-byte
+/// header tail + 24,576-byte body) and `0x0002` for a header-only
+/// reply (Address `0x000000FF`). `total_packs` is the ceiling of the
+/// CPRM-MKB total length divided by 24,576.
+///
+/// The parser accepts only the two spec-defined body lengths
+/// (`CPRM_MKB_PACK_LEN` or `0`); any other length is an
+/// [`AacsError::InvalidValue`]. For pack 0 the first 16 bytes of a
+/// full pack carry `CMAC(BK, MKB_Hash)` (§4.14.3.7 final paragraph);
+/// recovering / verifying that MAC is the host's responsibility once
+/// it holds the Bus Key.
+pub fn parse_cprm_mkb_pack_response(buf: &[u8]) -> Result<CprmMkbPackResponse, AacsError> {
+    let length = read_u16_be(buf, "CPRM MKB pack response header")? as usize;
+    if length < 2 {
+        return Err(AacsError::InvalidValue {
+            what: "CPRM MKB pack response length",
+            value: length as u64,
+        });
+    }
+    // 4-byte header (length:u16 + reserved:u8 + total_packs:u8); pack
+    // body length = length - 2 (the two-byte `length` field counts the
+    // remaining `reserved:u8 + total_packs:u8 + pack_data` bytes).
+    let body_len = length - 2;
+    if body_len != 0 && body_len != CPRM_MKB_PACK_LEN {
+        return Err(AacsError::InvalidValue {
+            what: "CPRM MKB pack response body length",
+            value: body_len as u64,
+        });
+    }
+    if buf.len() < 4 + body_len {
+        return Err(AacsError::Truncated("CPRM MKB pack response payload"));
+    }
+    let total_packs = buf[3];
+    let pack_data = buf[4..4 + body_len].to_vec();
+    Ok(CprmMkbPackResponse {
         total_packs,
         pack_data,
     })
@@ -2240,6 +2375,20 @@ pub struct MockDrive {
     pub last_host_key: Option<Vec<u8>>,
     /// Set to `true` after the host pushes `Invalidate AGID`.
     pub agid_invalidated: bool,
+    /// The synthetic CPRM Media Key Block bytes the mock serves for
+    /// READ DISC STRUCTURE Format `0x86`, as the full concatenation of
+    /// all packs. The dispatcher slices this into 24,576-byte packs by
+    /// the CDB `Address` field, zero-padding the final pack, and
+    /// reports `Total Packs = ceil(len / 24,576)`. An empty Vec models
+    /// media with no CPRM MKB (Total Packs `0`). (AACS Common
+    /// §4.14.3.7 Table 4-21.)
+    pub cprm_media_key_block: Vec<u8>,
+    /// The MKB Hash the mock authenticates the *first* CPRM-MKB pack
+    /// with: when an `auth` Bus Key is present, the dispatcher replaces
+    /// the first 16 bytes of pack 0 with `CMAC(BK, cprm_mkb_hash)`
+    /// (§4.14.3.7 final paragraph). In static mode (`auth = None`) the
+    /// verbatim `cprm_media_key_block` bytes are returned unmodified.
+    pub cprm_mkb_hash: [u8; 16],
     /// Optional authenticating drive identity. When `Some`, the mock
     /// performs the §4.3 drive side properly: it verifies the host's
     /// certificate + `Hsig`, generates a real `Dv = Dk·G`, signs
@@ -2277,6 +2426,8 @@ impl Default for MockDrive {
             last_host_cert_chal: None,
             last_host_key: None,
             agid_invalidated: false,
+            cprm_media_key_block: Vec::new(),
+            cprm_mkb_hash: [0u8; 16],
             auth: None,
         }
     }
@@ -2400,6 +2551,24 @@ impl MockDrive {
             last_host_cert_chal: None,
             last_host_key: None,
             agid_invalidated: false,
+            // Deterministic CPRM MKB spanning two packs (24,576 + 1
+            // byte ⇒ Total Packs = 2; the final pack is one body byte
+            // plus zero-padding). Each byte is patterned `0x86 ^ index`
+            // so a slice-by-Address slip surfaces as an obvious diff.
+            cprm_media_key_block: {
+                let mut v = vec![0u8; CPRM_MKB_PACK_LEN + 1];
+                for (i, b) in v.iter_mut().enumerate() {
+                    *b = 0x86u8 ^ (i as u8);
+                }
+                v
+            },
+            cprm_mkb_hash: {
+                let mut h = [0u8; 16];
+                for (i, b) in h.iter_mut().enumerate() {
+                    *b = 0xC6 ^ (i as u8);
+                }
+                h
+            },
             auth: None,
         }
     }
@@ -2670,6 +2839,77 @@ impl DriveCommand for MockDrive {
                             out.push((extent.lba_count >> 8) as u8);
                             out.push(extent.lba_count as u8);
                         }
+                        Ok(ScsiResponse::good(out))
+                    }
+                    FORMAT_AACS_CPRM_MEDIA_KEY_BLOCK => {
+                        // §4.14.3.7 Table 4-21. Total Packs = ceil(len /
+                        // 24,576). The Address field selects the pack;
+                        // Address 0x000000FF returns only the 4-byte
+                        // header (length 0x0002, no body) without auth.
+                        let total_bytes = self.cprm_media_key_block.len();
+                        let total_packs = total_bytes.div_ceil(CPRM_MKB_PACK_LEN);
+                        if total_packs > u8::MAX as usize {
+                            return Err(AacsError::InvalidValue {
+                                what: "MockDrive CPRM MKB Total Packs",
+                                value: total_packs as u64,
+                            });
+                        }
+                        let header_only = rds.address == CPRM_MKB_HEADER_ONLY_ADDRESS;
+                        if header_only {
+                            // length 0x0002 = reserved:u8 + total_packs:u8.
+                            let out = vec![0x00, 0x02, 0x00, total_packs as u8];
+                            return Ok(ScsiResponse::good(out));
+                        }
+                        let pack_index = rds.address as usize;
+                        if pack_index >= total_packs {
+                            // No such pack: §4.14.3 returns KEY NOT
+                            // PRESENT style failure. Model as InvalidValue.
+                            return Err(AacsError::InvalidValue {
+                                what: "MockDrive CPRM MKB pack index out of range",
+                                value: rds.address as u64,
+                            });
+                        }
+                        // Slice the requested pack, zero-padding the
+                        // final pack to a full 24,576-byte body.
+                        let start = pack_index * CPRM_MKB_PACK_LEN;
+                        let end = (start + CPRM_MKB_PACK_LEN).min(total_bytes);
+                        let mut pack = vec![0u8; CPRM_MKB_PACK_LEN];
+                        pack[..end - start].copy_from_slice(&self.cprm_media_key_block[start..end]);
+                        // First pack (Address 0) is transferred under the
+                        // AACS authentication process: the drive replaces
+                        // the first 16 bytes with CMAC(BK, MKB_Hash)
+                        // (§4.14.3.7 final paragraph). Requires the Bus
+                        // Key; absent an established session the drive
+                        // shall fail with KEY NOT ESTABLISHED.
+                        if pack_index == 0 {
+                            match &self.auth {
+                                Some(a) if a.bus_key.is_some() => {
+                                    let mac = crate::aes::aes_128_cmac(
+                                        &a.bus_key.unwrap(),
+                                        &self.cprm_mkb_hash,
+                                    );
+                                    pack[..16].copy_from_slice(&mac);
+                                }
+                                Some(_) => {
+                                    return Err(AacsError::InvalidValue {
+                                        what:
+                                            "READ_DISC_STRUCTURE Format 0x86 pack 0 without Bus Key",
+                                        value: 0,
+                                    });
+                                }
+                                // Static-fixture mode: return verbatim
+                                // bytes for byte-layout tests.
+                                None => {}
+                            }
+                        }
+                        // length = 24,576 (body) + 2 (reserved + total).
+                        let length = CPRM_MKB_PACK_LEN + 2;
+                        let mut out = Vec::with_capacity(4 + CPRM_MKB_PACK_LEN);
+                        out.push((length >> 8) as u8);
+                        out.push(length as u8);
+                        out.push(0x00);
+                        out.push(total_packs as u8);
+                        out.extend_from_slice(&pack);
                         Ok(ScsiResponse::good(out))
                     }
                     other => Err(AacsError::InvalidValue {

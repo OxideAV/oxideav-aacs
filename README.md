@@ -5,6 +5,39 @@ Content System) decryption layer used by Blu-ray Disc, per the
 publicly-published AACS LA technical specifications **Common Final
 0.953** (Oct 2012) and **BD-Prerecorded Final 0.953** (Oct 2012).
 
+Round 305 adds the **READ DISC STRUCTURE Format `0x86` (CPRM Media Key
+Block)** per AACS Common §4.14.3.7 Table 4-21 / MMC-6 §6.22.3 Table
+383 — the command that transfers the CPRM MKB recorded in the Lead-in
+Area of AACS Recordable Media. Unlike the AACS MKB (Format `0x83`,
+self-protected) the CPRM MKB's **first** pack is bound to the AACS
+authentication process: the drive replaces the first 16 bytes of pack 0
+with `CMAC(BK, MKB_Hash)` under the Bus Key (§4.14.3.7 final paragraph).
+
+- **`ReadDiscStructure::aacs_cprm_media_key_block_pack(agid, pack)`** —
+  typed `0xAD` CDB constructor (Media Type BD, Format `0x86`, pack
+  number in the Address field, allocation = 4-byte header + 24,576-byte
+  pack). The sentinel Address `0x000000FF`
+  (**`CPRM_MKB_HEADER_ONLY_ADDRESS`**) returns only the 4-byte header
+  (length `0x0002`, Total Packs only) with no authentication.
+- **`CprmMkbPackResponse`** + **`parse_cprm_mkb_pack_response`** — the
+  `[length:u16][reserved:u8][total_packs:u8][pack_data]` response. A
+  full pack is `0x6002` long (24,576 body + 2 header tail); the parser
+  accepts only the two spec body lengths (`CPRM_MKB_PACK_LEN` = 24,576
+  or `0`) and rejects anything else, plus truncation and `length < 2`.
+- The **`MockDrive`** Format `0x86` dispatcher arm slices a
+  `cprm_media_key_block` field into packs (zero-padding the final
+  pack), reports `Total Packs = ceil(len / 24,576)`, applies the pack-0
+  `CMAC(BK, MKB_Hash)` when an `auth` Bus Key is present, and enforces
+  the KEY-NOT-ESTABLISHED error for pack 0 without a Bus Key.
+
+A 17-case suite (`tests/synth_round305_cprm_media_key_block.rs`) pins
+the CDB layout, the header-only query, full-pack length / body, static
+and auth-mode pack-0 bytes (including the CMAC first-16-byte
+replacement), final-pack zero-padding, the ceiling Total-Packs rule,
+out-of-range / truncation / invalid-length rejections, and
+non-disturbance of the other Format-Code dispatch arms. This completes
+the READ DISC STRUCTURE AACS Format-Code range `0x80`–`0x86`.
+
 Round 299 adds the **`GET CONFIGURATION` (`0x46`) command + the AACS
 Feature Descriptor (Feature Code `0x010D`)** per AACS Common §4.14.1
 Table 4-4 and MMC-6 §6.5 (Table 256) / §5.2 (Tables 86–88) — the

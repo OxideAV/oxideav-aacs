@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Round 305 READ DISC STRUCTURE Format `0x86` (CPRM Media Key Block, Common §4.14.3.7 Table 4-21)
+
+The command that transfers the CPRM Media Key Block recorded in the
+Lead-in Area of AACS Recordable Media (MMC-6 §6.22.3 Table 383; AACS
+Common §4.14.3.7 Table 4-21). Unlike the AACS MKB (Format `0x83`,
+self-protected) the CPRM MKB's first pack is transferred under the AACS
+authentication process — the drive replaces the first 16 bytes of pack 0
+with `CMAC(BK, MKB_Hash)`. This completes the READ DISC STRUCTURE AACS
+Format-Code range `0x80`–`0x86`.
+
+- **`FORMAT_AACS_CPRM_MEDIA_KEY_BLOCK`** = `0x86`, **`CPRM_MKB_PACK_LEN`**
+  = `24576`, **`CPRM_MKB_HEADER_ONLY_ADDRESS`** = `0x000000FF`.
+- **`ReadDiscStructure::aacs_cprm_media_key_block_pack(agid, pack)`** —
+  typed `0xAD` CDB constructor (Media Type BD, Format `0x86`, pack
+  number in the Address field, allocation = 4-byte header + 24,576-byte
+  pack body). The sentinel Address `0x000000FF` returns only the 4-byte
+  header (length `0x0002`, Total Packs only), requiring no
+  authentication.
+- **`CprmMkbPackResponse`** + **`parse_cprm_mkb_pack_response`** — the
+  `[length:u16][reserved:u8][total_packs:u8][pack_data]` response. A
+  full pack is `0x6002` long (24,576 body + 2 header tail). The parser
+  accepts only the two spec body lengths (`24576` or `0`) and rejects
+  any other length, truncation, and `length < 2`.
+- The `MockDrive` Format `0x86` dispatcher arm: `cprm_media_key_block`
+  is sliced into packs (final pack zero-padded), `Total Packs =
+  ceil(len / 24,576)` is reported, the pack-0 `CMAC(BK, MKB_Hash)` is
+  applied when an `auth` Bus Key is present, and pack 0 without a Bus
+  Key is the spec-mandated error path.
+- 17-case integration suite
+  (`tests/synth_round305_cprm_media_key_block.rs`).
+
 ### Added — Round 299 GET CONFIGURATION (`0x46`) + AACS Feature Descriptor (Feature `0x010D`, Common §4.14.1 Table 4-4)
 
 The host's capability-discovery path: before issuing any AACS command a
