@@ -1,5 +1,7 @@
 # oxideav-aacs
 
+[![CI](https://github.com/OxideAV/oxideav-aacs/actions/workflows/ci.yml/badge.svg)](https://github.com/OxideAV/oxideav-aacs/actions/workflows/ci.yml) [![crates.io](https://img.shields.io/crates/v/oxideav-aacs.svg)](https://crates.io/crates/oxideav-aacs) [![docs.rs](https://docs.rs/oxideav-aacs/badge.svg)](https://docs.rs/oxideav-aacs) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Pure-Rust, clean-room implementation of the **AACS** (Advanced Access
 Content System) decryption layer used by Blu-ray Disc, per the
 publicly-published AACS LA technical specifications **Common Final
