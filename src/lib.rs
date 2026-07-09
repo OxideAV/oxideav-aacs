@@ -45,6 +45,7 @@ pub mod error;
 pub mod keydb;
 pub mod mkb;
 pub mod mmc;
+pub mod online;
 pub mod self_check;
 pub mod subdiff;
 pub mod unit_key;
@@ -112,6 +113,10 @@ pub use crate::mmc::{
 // the default public API. See the `test-util` cargo feature.
 #[cfg(any(test, feature = "test-util"))]
 pub use crate::mmc::MockDrive;
+pub use crate::online::{
+    enhanced_title_key_message, recover_enhanced_title_key, title_binding_hash,
+    verify_enhanced_permission, ONLINE_TITLE_ID_LEN, PERMISSION_MESSAGE_LEN,
+};
 pub use crate::self_check::{aacs_la_pub_self_check, ake_ecdh_self_check, curve_self_check};
 // `ake_full_self_check` + `all_self_checks` drive the `test-util`-gated
 // `MockDrive`, so they are gated together behind `test-util`.
