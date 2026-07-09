@@ -49,6 +49,14 @@ publicly-published AACS LA technical specifications **Common Final
 - **Content Revocation List** (`crl`) — PVB §2.7 parse, per-segment
   ECDSA verify, and revocation-record lookup for every defined record
   type, including the recordable-media (RMRR) layout.
+- **CPS Unit Usage File / CCI** (`cci`) — BD-Prerecorded §3.9.4
+  (Tables 3-17 – 3-33) copy-control and title-usage parse/serialize:
+  the `CCI_and_other_info()` container, Basic CCI (EPN/CCI, Image
+  Constraint, Digital Only, APSTB, per-Title Basic/Enhanced bitmap),
+  Enhanced Title Usage (cacheable-permission windows with BCD
+  `After`/`Before` dates), on-line Key Management (Binding Type), and
+  Content Owner Authorized Outputs, all round-tripping through the
+  Primary/Secondary CCI Area layout.
 
 Because AACS LA distributes the LA Entity public key only to licensees,
 every `verify_*` entry point takes a caller-supplied `&ec::Point`; the
@@ -137,6 +145,7 @@ cross-check the §3.2.1 diagram, never for code text) were consulted.
 | `cht`                 | (SHA-1 §2.1.5)         | §2.3                    |
 | `content_certificate` | §2.3 (ECDSA)           | §2.1 (Table 2-1)        |
 | `crl`                 | §2.3 (ECDSA)           | §2.7 (Tables 2-2..2-5)  |
+| `cci`                 | §5.2 (Title Usage)     | §3.9.4 (Tables 3-17..3-33) |
 | `subdiff`             | §3.2.1 — §3.2.4        | —                       |
 | `mkb`                 | §3.2.5                 | §3.1, §3.4              |
 | `unit_key`            | —                      | §3.9.3                  |
