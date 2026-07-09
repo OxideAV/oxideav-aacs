@@ -34,6 +34,11 @@ publicly-published AACS LA technical specifications **Common Final
 - **Title Key unwrap** (BD-Prerecorded §3.9.3) and **content
   scrambling** (BD-Prerecorded §3.10): the 6144-byte Aligned Unit
   decryption pipeline with `BlockKey = AES-128E(Kcu, seed) XOR seed`.
+- **Enhanced-Title / AACS On-line Title Key** (`online`,
+  BD-Prerecorded §4.4.1.5.2 / Common §5.3) — the Remote-Server
+  permission formula `AES-128E(Kvu, Kt XOR Nonce XOR AES_H(Volume ID ||
+  title_id))`: server-side message, player-side recovery, and the
+  constant-time `setPermission()` verification.
 
 ### Signature / integrity verification
 
@@ -150,6 +155,7 @@ cross-check the §3.2.1 diagram, never for code text) were consulted.
 | `mkb`                 | §3.2.5                 | §3.1, §3.4              |
 | `unit_key`            | —                      | §3.9.3                  |
 | `vuk`                 | —                      | §3.3                    |
+| `online`              | §5.3 (Permission)      | §4.4.1.5.2              |
 | `content`             | —                      | §3.10                   |
 | `volume`              | —                      | §3.1, §3.9, Figure 3-5  |
 | `keydb`               | (de-facto community)   | —                       |
