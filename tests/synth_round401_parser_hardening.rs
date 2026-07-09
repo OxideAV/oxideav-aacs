@@ -206,6 +206,13 @@ fn general_corpus_never_panics() {
         let _ = parse_send_disc_structure_write_data_key(&b);
         let _ = parse_send_disc_structure_bus_encryption_sector_extents(&b);
         let _ = parse_aacs_feature_descriptor(&b);
+        // CPS Unit Usage File / CCI_and_other_info parsers.
+        let _ = CpsUnitUsageFile::parse(&b);
+        let _ = CciAndOtherInfo::parse(&b);
+        let _ = BasicCci::parse_data(&b);
+        let _ = EnhancedTitleUsage::parse_data(&b);
+        let _ = KeyManagementOnline::parse_data(&b);
+        let _ = ContentOwnerAuthorizedOutputs::parse_data(&b);
     }
 }
 
@@ -260,6 +267,58 @@ fn unit_key_smart_mutations_never_panic() {
     }
 }
 
+/// A CPS Unit Usage File carrying one block of each defined type; the
+/// loop-count and per-block `data_length` fields are the mutation
+/// targets that drive the Primary/Secondary area walk.
+fn valid_usage_file() -> Vec<u8> {
+    CpsUnitUsageFile {
+        primary: vec![
+            BasicCci {
+                epn_unasserted: true,
+                cci: Cci::CopyOneGeneration,
+                image_constraint_token: false,
+                digital_only_token: true,
+                apstb: 0b101,
+                title_types: vec![TypeOfTitle::Enhanced, TypeOfTitle::Basic],
+            }
+            .to_block(),
+            EnhancedTitleUsage {
+                title_id: 7,
+                cacheable: Cacheable::Cacheable,
+                period: 24,
+                after: Some(TitleDate {
+                    year: 2026,
+                    month: 1,
+                    day: 2,
+                    hour: 3,
+                    minute: 4,
+                    timezone: 0,
+                }),
+                before: None,
+            }
+            .to_block(),
+            KeyManagementOnline {
+                unit_key_status: 2,
+                binding_type: BindingType::DeviceContent,
+            }
+            .to_block(),
+        ],
+        secondary: vec![ContentOwnerAuthorizedOutputs {
+            output_control_bits: [0x5A; 16],
+        }
+        .to_block()],
+        has_secondary: true,
+    }
+    .to_bytes()
+}
+
+#[test]
+fn usage_file_smart_mutations_never_panic() {
+    for m in smart_mutations(&valid_usage_file()) {
+        let _ = CpsUnitUsageFile::parse(&m);
+    }
+}
+
 /// The valid fixtures themselves must still parse cleanly — a guard
 /// that the mutation seeds are actually well-formed (otherwise the
 /// mutation battery would be exercising an already-broken input).
@@ -268,4 +327,5 @@ fn valid_fixtures_parse() {
     assert!(Mkb::parse(&valid_mkb()).is_ok());
     assert!(ContentRevocationList::parse(&valid_crl_bytes()).is_ok());
     assert!(UnitKeyFile::parse(&valid_unit_key()).is_ok());
+    assert!(CpsUnitUsageFile::parse(&valid_usage_file()).is_ok());
 }
