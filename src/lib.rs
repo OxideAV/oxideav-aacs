@@ -34,6 +34,7 @@
 
 pub mod aes;
 pub mod ake;
+pub mod cci;
 pub mod cht;
 pub mod content;
 pub mod content_certificate;
@@ -54,6 +55,14 @@ pub use crate::ake::{
     aacs_la_pub_point, build_signed_certificate, bus_key_from_point, host_authenticate,
     read_verified_volume_id, AkeResult, Certificate, DriveAuthState, HostCredentials,
     AACS_LA_PUB_X, AACS_LA_PUB_Y, BUS_KEY_LEN, CERT_TYPE_DRIVE, CERT_TYPE_HOST,
+};
+pub use crate::cci::{
+    BasicCci, BindingType, Cacheable, Cci, CciAndOtherInfo, ContentOwnerAuthorizedOutputs,
+    CpsUnitUsageFile, EnhancedTitleUsage, KeyManagementOnline, TitleDate, TypeOfTitle,
+    BASIC_CCI_DATA_LEN, CCI_AREA_HEADER_LEN, CCI_HEADER_LEN, CCI_TYPE_BASIC,
+    CCI_TYPE_CONTENT_OWNER_OUTPUTS, CCI_TYPE_ENHANCED_TITLE_USAGE, CCI_TYPE_KEY_MANAGEMENT_ONLINE,
+    CCI_VERSION_0100, CONTENT_OWNER_OUTPUTS_DATA_LEN, ENHANCED_TITLE_USAGE_DATA_LEN,
+    KEY_MANAGEMENT_ONLINE_DATA_LEN, PRIMARY_CCI_AREA_LEN,
 };
 pub use crate::cht::{
     hash_value_of_unit, ClipDescriptor, ContentHashTable, HASH_UNIT_SIZE, HASH_VALUE_SIZE,
