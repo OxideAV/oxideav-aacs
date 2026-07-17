@@ -208,7 +208,7 @@ pub struct AkeResult {
 }
 
 /// Run the full §4.3 Host-side AKE against any [`DriveCommand`]
-/// transport (the in-process [`crate::mmc::MockDrive`] in tests; a real
+/// transport (the in-process `MockDrive` in tests; a real
 /// SCSI back-end in production).
 ///
 /// `host_nonce` (`Hn`) and `hk` (the ephemeral host secret scalar) are

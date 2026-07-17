@@ -71,6 +71,8 @@ pub fn aes_g3(device_key: &[u8; 16]) -> AesG3Output {
 
 /// `aes_g3` with a caller-supplied seed (used internally by
 /// [`aes_g3`] and exposed for the test crate).
+// internal — exposed for tests/fuzz; not part of the stable API
+#[doc(hidden)]
 pub fn aes_g3_with_seed(device_key: &[u8; 16], seed: &[u8; 16]) -> AesG3Output {
     let outs = [
         aes_g3_step(device_key, seed, 0),

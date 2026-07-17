@@ -27,8 +27,8 @@
 //!    `dk`, `hk`, derive `Dv = dk·G`, `Hv = hk·G`, then check that
 //!    `lsb_128(x(hk·Dv)) == lsb_128(x(dk·Hv))` (the §4.3 step 28/29 Bus
 //!    Key derivation).
-//! 4. [`ake_full_self_check`] — full §4.3 AKE end-to-end against an
-//!    in-process synthetic-LA-rooted [`crate::MockDrive`]: mints a
+//! 4. `ake_full_self_check` — full §4.3 AKE end-to-end against an
+//!    in-process synthetic-LA-rooted `MockDrive`: mints a
 //!    synthetic AACS LA root key, signs synthetic Drive + Host
 //!    certificates, runs [`crate::host_authenticate`] through the
 //!    authenticating [`crate::ake::DriveAuthState`], and asserts both
@@ -231,7 +231,9 @@ pub fn ake_ecdh_self_check() -> Result<(), AacsError> {
 ///
 /// Gated behind the `test-util` cargo feature: it depends on the
 /// in-process [`MockDrive`] fixture, which is itself `test-util`-gated.
+// internal — exposed for tests/fuzz; not part of the stable API
 #[cfg(any(test, feature = "test-util"))]
+#[doc(hidden)]
 pub fn ake_full_self_check() -> Result<(), AacsError> {
     // Synthetic AACS LA root key — *not* the real one.
     let la_priv = small_scalar(0x0abc_def1);
@@ -336,7 +338,9 @@ pub fn ake_full_self_check() -> Result<(), AacsError> {
 /// [`MockDrive`] fixture. The three pure-math checks
 /// ([`curve_self_check`], [`aacs_la_pub_self_check`],
 /// [`ake_ecdh_self_check`]) remain callable on the default public API.
+// internal — exposed for tests/fuzz; not part of the stable API
 #[cfg(any(test, feature = "test-util"))]
+#[doc(hidden)]
 pub fn all_self_checks() -> Result<(), AacsError> {
     curve_self_check()?;
     aacs_la_pub_self_check()?;

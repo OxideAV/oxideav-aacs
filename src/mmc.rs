@@ -24,7 +24,7 @@
 //! `IOSCSITaskDeviceInterface` on macOS, `IOCTL_SCSI_PASS_THROUGH_DIRECT`
 //! on Windows — is abstracted behind the [`DriveCommand`] trait. Phase
 //! B ships no real transport: only the wire format + the trait surface
-//! + the in-process [`MockDrive`] for tests.
+//! + the in-process `MockDrive` for tests.
 //!
 //! # Spec map
 //!
@@ -420,7 +420,7 @@ impl ReportKey {
     }
 
     /// Inverse of [`ReportKey::cdb`]: reconstruct from 12 bytes. Used
-    /// by [`MockDrive`] to dispatch + by tests. Returns
+    /// by `MockDrive` to dispatch + by tests. Returns
     /// [`AacsError::InvalidValue`] when the opcode byte is not
     /// `0xA4`.
     pub fn parse_cdb(cdb: &[u8; MMC_CDB_LEN]) -> Result<Self, AacsError> {
@@ -1601,7 +1601,7 @@ pub fn build_send_key_host_key(hv: &[u8; EC_POINT_LEN], hsig: &[u8; EC_SIG_LEN])
 
 /// Parse the 116-byte SEND KEY Host Certificate Challenge parameter
 /// list. Inverse of [`build_send_key_host_cert_chal`]; used by
-/// [`MockDrive`] and tests.
+/// `MockDrive` and tests.
 pub fn parse_send_key_host_cert_chal(
     buf: &[u8],
 ) -> Result<([u8; HOST_NONCE_LEN], [u8; HOST_CERT_LEN]), AacsError> {
@@ -1667,7 +1667,7 @@ pub fn build_send_disc_structure_write_data_key(
 
 /// Parse the 20-byte SEND DISC STRUCTURE Write Data Key parameter
 /// list. Inverse of [`build_send_disc_structure_write_data_key`]; used
-/// by [`MockDrive`] and tests. Returns the 16-byte Write Data Key in
+/// by `MockDrive` and tests. Returns the 16-byte Write Data Key in
 /// its on-the-wire (Bus-Key-encrypted) form. Rejects a length field
 /// other than the Table 4-28 mandated `0x0012` and truncated buffers.
 pub fn parse_send_disc_structure_write_data_key(
@@ -1732,7 +1732,7 @@ pub fn build_send_disc_structure_bus_encryption_sector_extents(
 /// Parse the SEND DISC STRUCTURE Bus-Encryption Sector Extents parameter
 /// list (Format `0x85`). Inverse of
 /// [`build_send_disc_structure_bus_encryption_sector_extents`]; used by
-/// [`MockDrive`] and tests. Returns the extents in their on-the-wire
+/// `MockDrive` and tests. Returns the extents in their on-the-wire
 /// order (no sort / overlap / capacity validation — that is
 /// [`validate_bus_encryption_sector_extents`]'s job).
 ///
@@ -2272,7 +2272,9 @@ pub trait DriveCommand {
 /// because `Default` is only auto-derived for arrays up to length 32;
 /// the 40-byte ECDSA-secp160r1 point/signature fields and the 92-byte
 /// certificate field exceed that bound.
+// internal — exposed for tests/fuzz; not part of the stable API
 #[cfg(any(test, feature = "test-util"))]
+#[doc(hidden)]
 #[derive(Debug, Clone)]
 pub struct MockDrive {
     /// AGID the mock will return when REPORT KEY Key Format `0x00` is

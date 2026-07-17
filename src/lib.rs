@@ -111,7 +111,9 @@ pub use crate::mmc::{
 };
 // `MockDrive` is a `test-util`-gated synthetic-drive fixture, not part of
 // the default public API. See the `test-util` cargo feature.
+// internal — exposed for tests/fuzz; not part of the stable API
 #[cfg(any(test, feature = "test-util"))]
+#[doc(hidden)]
 pub use crate::mmc::MockDrive;
 pub use crate::online::{
     enhanced_title_key_message, recover_enhanced_title_key, title_binding_hash,
@@ -120,7 +122,9 @@ pub use crate::online::{
 pub use crate::self_check::{aacs_la_pub_self_check, ake_ecdh_self_check, curve_self_check};
 // `ake_full_self_check` + `all_self_checks` drive the `test-util`-gated
 // `MockDrive`, so they are gated together behind `test-util`.
+// internal — exposed for tests/fuzz; not part of the stable API
 #[cfg(any(test, feature = "test-util"))]
+#[doc(hidden)]
 pub use crate::self_check::{ake_full_self_check, all_self_checks};
 pub use crate::subdiff::{
     aes_g3, applies_to_device, apply_key_conversion_data, derive_processing_key, SubsetDifference,

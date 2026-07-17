@@ -382,6 +382,8 @@ fn reduce_wide(wide: &[u32; 10], m: &U160) -> U160 {
 // ---------------------------------------------------------------------
 
 /// Reduce a [`U160`] modulo the group order `n`.
+// internal — exposed for tests/fuzz; not part of the stable API
+#[doc(hidden)]
 pub fn scalar_reduce(mut v: U160) -> U160 {
     while v.cmp(&N) != core::cmp::Ordering::Less {
         let (r, _) = v.sbb(&N);
@@ -392,11 +394,15 @@ pub fn scalar_reduce(mut v: U160) -> U160 {
 
 /// Reduce a 320-bit wide value modulo `n` (used to fold a full SHA-1
 /// digest / random material into a scalar).
+// internal — exposed for tests/fuzz; not part of the stable API
+#[doc(hidden)]
 pub fn scalar_reduce_wide(wide: &[u32; 10]) -> U160 {
     reduce_wide(wide, &N)
 }
 
 /// Modular addition of two scalars mod `n`.
+// internal — exposed for tests/fuzz; not part of the stable API
+#[doc(hidden)]
 pub fn scalar_add(a: &U160, b: &U160) -> U160 {
     let (sum, carry) = a.adc(b);
     if carry == 1 {
@@ -408,12 +414,16 @@ pub fn scalar_add(a: &U160, b: &U160) -> U160 {
 }
 
 /// Modular multiplication of two scalars mod `n`.
+// internal — exposed for tests/fuzz; not part of the stable API
+#[doc(hidden)]
 pub fn scalar_mul(a: &U160, b: &U160) -> U160 {
     let prod = mul_wide(a, b);
     reduce_wide(&prod, &N)
 }
 
 /// Modular inverse of a scalar mod `n` (Fermat: `a^{n-2} mod n`).
+// internal — exposed for tests/fuzz; not part of the stable API
+#[doc(hidden)]
 pub fn scalar_inv(a: &U160) -> U160 {
     if a.is_zero() {
         return U160::ZERO;

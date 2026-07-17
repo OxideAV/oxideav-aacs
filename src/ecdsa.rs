@@ -127,6 +127,8 @@ fn digest_to_scalar(digest: &[u8; 20]) -> U160 {
 /// only if it produces a degenerate `r == 0` or `s == 0`, which is
 /// astronomically unlikely for this curve but handled for completeness
 /// per X9.62 §7.3.
+// internal — exposed for tests/fuzz; not part of the stable API
+#[doc(hidden)]
 pub fn sign_with_k(priv_key: &U160, data: &[u8], k: &U160) -> Option<Signature> {
     let e = digest_to_scalar(&sha1(data));
     let mut k = scalar_reduce(*k);
@@ -166,6 +168,8 @@ pub fn sign_with_k(priv_key: &U160, data: &[u8], k: &U160) -> Option<Signature> 
 /// handshake (NOT RFC 6979 — see module docs). `k = AES-H(priv || data
 /// || counter) mod n`, retried until non-zero. A real device draws `k`
 /// from the §2.2 RNG.
+// internal — exposed for tests/fuzz; not part of the stable API
+#[doc(hidden)]
 pub fn derive_k(priv_key: &U160, data: &[u8]) -> U160 {
     let mut counter = 0u8;
     loop {
@@ -249,6 +253,8 @@ pub fn verify(pub_key: &Point, sig: &Signature, data: &[u8]) -> bool {
 /// Wide-digest variant used when the caller already holds a 320-bit hash
 /// folded into a scalar (kept for parity with the reduction helpers; the
 /// AACS path always uses [`sha1`]).
+// internal — exposed for tests/fuzz; not part of the stable API
+#[doc(hidden)]
 pub fn scalar_from_wide_digest(wide: &[u32; 10]) -> U160 {
     scalar_reduce_wide(wide)
 }

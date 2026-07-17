@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Marked the crate's internal-only public items `#[doc(hidden)]` (the `test-util` `MockDrive` fixture and its coupled AKE self-checks, plus internal EC scalar arithmetic and deterministic-`k` ECDSA test helpers) so API-diff tooling no longer tracks them as part of the stable public surface. No signature, visibility, or behavioural changes.
+
 ### Added — Round 305 READ DISC STRUCTURE Format `0x86` (CPRM Media Key Block, Common §4.14.3.7 Table 4-21)
 
 The command that transfers the CPRM Media Key Block recorded in the
