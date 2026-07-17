@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/OxideAV/oxideav-aacs/compare/v0.1.3...v0.2.0) - 2026-07-17
+
+### Other
+
+- Mark internal-only public surface #[doc(hidden)]
+- document the online (Enhanced-Title / AACS On-line) module
+- Enhanced-Title (AACS On-line) Title-Key derivation (BD-Prerecorded §4.4.1.5.2 / Common §5.3)
+- document the new cci (CPS Unit Usage File / CCI) module
+- extend hardening battery to the new CPS Unit Usage File / CCI parsers
+- CPS Unit Usage File + CCI_and_other_info structures (BD-Prerecorded §3.9.4, Tables 3-17..3-33)
+- round 401 — hostile-input hardening battery for all byte-slice parsers
+- add CI / crates.io / docs.rs / MIT-license badges
+- refresh to current status, drop per-round changelog cruft
+- READ DISC STRUCTURE Format 0x86 CPRM Media Key Block (Common §4.14.3.7 Table 4-21)
+- round 299 — GET CONFIGURATION (0x46) + AACS Feature Descriptor (Feature 0x010D)
+- Type-4 verify-precursor-or-apply-KCD Media Key resolution (Common §3.2.5.1.4)
+- SEND DISC STRUCTURE Format 0x85 Bus-Encryption Sector Extents (Common §4.14.5.2 Table 4-29)
+
 ### Changed
 
 - Marked the crate's internal-only public items `#[doc(hidden)]` (the `test-util` `MockDrive` fixture and its coupled AKE self-checks, plus internal EC scalar arithmetic and deterministic-`k` ECDSA test helpers) so API-diff tooling no longer tracks them as part of the stable public surface. No signature, visibility, or behavioural changes.
