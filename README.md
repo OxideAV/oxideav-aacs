@@ -103,7 +103,10 @@ use oxideav_aacs::{AacsVolume, KeyDb};
 
 let volume = AacsVolume::open("/mnt/bd-rom")?;
 let keydb = KeyDb::load_default()?;
-let vuk = volume.resolve_vuk_from_keydb(&keydb)
+// KEYDB.cfg is keyed by the disc ID: SHA-1 of the whole Unit_Key_RO.inf.
+let uk_ro = std::fs::read("/mnt/bd-rom/AACS/Unit_Key_RO.inf").expect("read Unit_Key_RO.inf");
+let disc_id = oxideav_aacs::vuk::disc_id_from_unit_key_file_bytes(&uk_ro);
+let vuk = volume.resolve_vuk_from_keydb(&keydb, &disc_id)
     .expect("disc VUK not in KEYDB.cfg");
 let mut volume = volume;
 volume.unwrap_title_keys(&vuk)?;
