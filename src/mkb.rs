@@ -20,7 +20,7 @@
 
 use crate::aes::aes_128_ecb_decrypt;
 use crate::ec::Point;
-use crate::ecdsa::{verify as ecdsa_verify, Signature as EcdsaSignature};
+use crate::ecdsa::{Signature as EcdsaSignature, verify as ecdsa_verify};
 use crate::error::AacsError;
 
 /// MKB Type tag per Common spec §3.2.5.1.1 Table 3-2.
@@ -947,7 +947,7 @@ mod tests {
         // Type+Version record (tag=0x10, minimal payload).
         bytes.extend_from_slice(&[0x10, 0x00, 0x00, 0x0C]); // length 12 = header + 8-byte payload
         bytes.extend_from_slice(&[0; 8]); // padding payload (mkb_type, version_number)
-                                          // End-of-MKB record (tag=0x02, length 4 = header only).
+        // End-of-MKB record (tag=0x02, length 4 = header only).
         bytes.extend_from_slice(&[0x02, 0x00, 0x00, 0x04]);
         // Sector-aligned trailing zeros.
         bytes.extend_from_slice(&[0; 32]);
@@ -1318,7 +1318,7 @@ mod tests {
         let mut hrl_payload = Vec::new();
         hrl_payload.extend_from_slice(&2u32.to_be_bytes()); // Total entries
         hrl_payload.extend_from_slice(&2u32.to_be_bytes()); // N1
-                                                            // Two entries: range || id (8 bytes each).
+        // Two entries: range || id (8 bytes each).
         hrl_payload.extend_from_slice(&[0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
         hrl_payload.extend_from_slice(&[0x00, 0x01, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15]);
 

@@ -18,7 +18,7 @@
 //! AES-G but with AES-128E in place of AES-128D — i.e. it is *not*
 //! [`crate::aes::aes_g`].
 
-use crate::aes::{aes_128_cbc_decrypt, aes_128_cbc_encrypt, aes_128_ecb_encrypt, IV0_AACS};
+use crate::aes::{IV0_AACS, aes_128_cbc_decrypt, aes_128_cbc_encrypt, aes_128_ecb_encrypt};
 use crate::error::AacsError;
 
 /// Size of an AACS Aligned Unit in bytes (BD-Prerecorded spec §3.10).

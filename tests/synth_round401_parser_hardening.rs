@@ -22,7 +22,7 @@
 
 use oxideav_aacs::content_certificate::ContentCertificateId;
 use oxideav_aacs::crl::{
-    ContentRevocationList, CrlSegment, RevocationRecord, LIST_TYPE_FIRST_GEN, SEGMENT_SIGNATURE_LEN,
+    ContentRevocationList, CrlSegment, LIST_TYPE_FIRST_GEN, RevocationRecord, SEGMENT_SIGNATURE_LEN,
 };
 use oxideav_aacs::*;
 
@@ -303,10 +303,12 @@ fn valid_usage_file() -> Vec<u8> {
             }
             .to_block(),
         ],
-        secondary: vec![ContentOwnerAuthorizedOutputs {
-            output_control_bits: [0x5A; 16],
-        }
-        .to_block()],
+        secondary: vec![
+            ContentOwnerAuthorizedOutputs {
+                output_control_bits: [0x5A; 16],
+            }
+            .to_block(),
+        ],
         has_secondary: true,
     }
     .to_bytes()

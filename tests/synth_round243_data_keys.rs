@@ -15,8 +15,8 @@
 //! `with_test_fixture` constructor without an `auth` slot.
 
 use oxideav_aacs::{
-    parse_data_keys_response, DataDirection, DataKeysResponse, DriveCommand, MockDrive,
-    ReadDiscStructure,
+    DataDirection, DataKeysResponse, DriveCommand, MockDrive, ReadDiscStructure,
+    parse_data_keys_response,
 };
 
 const DATA_KEY_LEN: usize = 16;
@@ -157,7 +157,9 @@ fn data_keys_response_field_offsets_match_table_4_19() {
     );
     assert_eq!(
         parsed.write_data_key_encrypted,
-        [20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35]
+        [
+            20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35
+        ]
     );
 }
 

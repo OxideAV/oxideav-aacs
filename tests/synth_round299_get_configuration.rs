@@ -21,12 +21,12 @@
 
 use oxideav_aacs::mmc::{
     AACS_FEATURE_AACS_VERSION, AACS_FEATURE_ADDITIONAL_LENGTH, AACS_FEATURE_DESCRIPTOR_LEN,
-    AACS_FEATURE_VERSION, FEATURE_AACS, FEATURE_HEADER_LEN, GET_CONFIGURATION_CDB_LEN,
-    GET_CONFIGURATION_OPCODE, GET_CONFIG_RT_ONE,
+    AACS_FEATURE_VERSION, FEATURE_AACS, FEATURE_HEADER_LEN, GET_CONFIG_RT_ONE,
+    GET_CONFIGURATION_CDB_LEN, GET_CONFIGURATION_OPCODE,
 };
 use oxideav_aacs::{
-    build_get_configuration_aacs_response, find_aacs_feature_descriptor,
-    parse_aacs_feature_descriptor, AacsError, AacsFeatureDescriptor, GetConfiguration,
+    AacsError, AacsFeatureDescriptor, GetConfiguration, build_get_configuration_aacs_response,
+    find_aacs_feature_descriptor, parse_aacs_feature_descriptor,
 };
 
 fn sample_descriptor() -> AacsFeatureDescriptor {
@@ -236,7 +236,7 @@ fn find_skips_leading_non_aacs_descriptors() {
     let mut response = Vec::new();
     response.extend_from_slice(&0u32.to_be_bytes()); // Data Length (unused by walk)
     response.extend_from_slice(&[0, 0, 0, 0]); // reserved + Current Profile
-                                               // Core feature: code 0x0001, byte2=0, additional length 8, 8 bytes data.
+    // Core feature: code 0x0001, byte2=0, additional length 8, 8 bytes data.
     response.extend_from_slice(&[0x00, 0x01, 0x00, 0x08]);
     response.extend_from_slice(&[0u8; 8]);
     // AACS descriptor.

@@ -16,11 +16,11 @@
 //! SYSTEM RESOURCE FAILURE. No real disc, no real drive.
 
 use oxideav_aacs::{
-    build_send_disc_structure_bus_encryption_sector_extents,
+    BusEncryptionSectorExtent, DataDirection, DriveCommand, MockDrive, ReadDiscStructure,
+    SendDiscStructure, build_send_disc_structure_bus_encryption_sector_extents,
     parse_bus_encryption_sector_extents_response,
     parse_send_disc_structure_bus_encryption_sector_extents,
-    validate_bus_encryption_sector_extents, BusEncryptionSectorExtent, DataDirection, DriveCommand,
-    MockDrive, ReadDiscStructure, SendDiscStructure,
+    validate_bus_encryption_sector_extents,
 };
 
 const EXTENT_LEN: usize = 16;
@@ -169,9 +169,11 @@ fn mock_drive_rejects_unsorted_and_leaves_state() {
     let bad = vec![extent(0x2000, 0x10), extent(0x1000, 0x10)];
     let cdb = SendDiscStructure::aacs_bus_encryption_sector_extents(bad.len()).cdb();
     let wire = build_send_disc_structure_bus_encryption_sector_extents(&bad);
-    assert!(drive
-        .execute(&cdb, DataDirection::ToDevice, &wire, 0)
-        .is_err());
+    assert!(
+        drive
+            .execute(&cdb, DataDirection::ToDevice, &wire, 0)
+            .is_err()
+    );
     assert_eq!(drive.bus_encryption_sector_extents, before);
 }
 
@@ -183,9 +185,11 @@ fn mock_drive_rejects_overlapping_extents() {
     let bad = vec![extent(0x1000, 0x100), extent(0x1080, 0x10)];
     let cdb = SendDiscStructure::aacs_bus_encryption_sector_extents(bad.len()).cdb();
     let wire = build_send_disc_structure_bus_encryption_sector_extents(&bad);
-    assert!(drive
-        .execute(&cdb, DataDirection::ToDevice, &wire, 0)
-        .is_err());
+    assert!(
+        drive
+            .execute(&cdb, DataDirection::ToDevice, &wire, 0)
+            .is_err()
+    );
     assert_eq!(drive.bus_encryption_sector_extents, before);
 }
 
@@ -195,9 +199,11 @@ fn mock_drive_rejects_zero_lba_count() {
     let bad = vec![extent(0x1000, 0)];
     let cdb = SendDiscStructure::aacs_bus_encryption_sector_extents(bad.len()).cdb();
     let wire = build_send_disc_structure_bus_encryption_sector_extents(&bad);
-    assert!(drive
-        .execute(&cdb, DataDirection::ToDevice, &wire, 0)
-        .is_err());
+    assert!(
+        drive
+            .execute(&cdb, DataDirection::ToDevice, &wire, 0)
+            .is_err()
+    );
 }
 
 #[test]
@@ -208,9 +214,11 @@ fn mock_drive_rejects_extent_beyond_capacity() {
     let bad = vec![extent(0xFFF0, 0x20)];
     let cdb = SendDiscStructure::aacs_bus_encryption_sector_extents(bad.len()).cdb();
     let wire = build_send_disc_structure_bus_encryption_sector_extents(&bad);
-    assert!(drive
-        .execute(&cdb, DataDirection::ToDevice, &wire, 0)
-        .is_err());
+    assert!(
+        drive
+            .execute(&cdb, DataDirection::ToDevice, &wire, 0)
+            .is_err()
+    );
 
     // An extent ending exactly at capacity is accepted.
     drive.max_bus_encryption_sector_extents = 1;
@@ -234,9 +242,11 @@ fn mock_drive_rejects_too_many_extents() {
     let bad = vec![extent(0, 0x10), extent(0x10, 0x10), extent(0x20, 0x10)];
     let cdb = SendDiscStructure::aacs_bus_encryption_sector_extents(bad.len()).cdb();
     let wire = build_send_disc_structure_bus_encryption_sector_extents(&bad);
-    assert!(drive
-        .execute(&cdb, DataDirection::ToDevice, &wire, 0)
-        .is_err());
+    assert!(
+        drive
+            .execute(&cdb, DataDirection::ToDevice, &wire, 0)
+            .is_err()
+    );
     assert_eq!(drive.bus_encryption_sector_extents, before);
 }
 

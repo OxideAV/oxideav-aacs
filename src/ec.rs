@@ -486,11 +486,7 @@ impl Point {
         let px = Fp::from_be_bytes(x);
         let py = Fp::from_be_bytes(y);
         let p = Point::Affine { x: px, y: py };
-        if p.is_on_curve() {
-            Some(p)
-        } else {
-            None
-        }
+        if p.is_on_curve() { Some(p) } else { None }
     }
 
     /// Serialize an affine point to the 40-byte AACS EC-point encoding

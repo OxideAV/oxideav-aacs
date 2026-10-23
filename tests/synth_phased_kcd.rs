@@ -24,8 +24,8 @@
 use oxideav_aacs::aes::{aes_128_ecb_encrypt, aes_g};
 use oxideav_aacs::keydb::KeyDb;
 use oxideav_aacs::subdiff::{
-    apply_key_conversion_data, derive_processing_key, media_key_from_processing_key,
-    SubsetDifference,
+    SubsetDifference, apply_key_conversion_data, derive_processing_key,
+    media_key_from_processing_key,
 };
 use oxideav_aacs::volume::{AacsVolume, DeviceKey};
 use oxideav_aacs::{AacsError, Mkb};

@@ -15,7 +15,7 @@
 //! This catches any divergence between the "walk down" loop and the
 //! per-step formula.
 
-use oxideav_aacs::{aes_g3, applies_to_device, derive_processing_key, SubsetDifference};
+use oxideav_aacs::{SubsetDifference, aes_g3, applies_to_device, derive_processing_key};
 
 #[test]
 fn one_level_walk_matches_manual_derivation() {

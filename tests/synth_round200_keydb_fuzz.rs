@@ -229,8 +229,7 @@ fn pk_record_wrong_hex_lengths_are_rejected_with_reason() {
 #[test]
 fn hc_record_internal_length_mismatch_is_rejected() {
     // Type=0x02, Ver=0x03, declared=0x0064 (=100), only 8 bytes.
-    let line =
-        "| HC | HOST_PRIV_KEY 0x0102030405060708090A0B0C0D0E0F1011121314 | HOST_CERT 0x0203006401020304";
+    let line = "| HC | HOST_PRIV_KEY 0x0102030405060708090A0B0C0D0E0F1011121314 | HOST_CERT 0x0203006401020304";
     let (db, report) = KeyDb::parse_with_report(line).unwrap();
     assert!(db.host_certs().is_empty());
     assert_eq!(report.skipped_count(), 1);

@@ -1455,7 +1455,7 @@ pub fn parse_bus_encryption_sector_extents_response(
         ));
     }
     let extent_section_len = length - 2;
-    if extent_section_len % BUS_ENCRYPTION_SECTOR_EXTENT_LEN != 0 {
+    if !extent_section_len.is_multiple_of(BUS_ENCRYPTION_SECTOR_EXTENT_LEN) {
         return Err(AacsError::Truncated(
             "Bus-Encryption Sector Extents response extent record stride",
         ));
@@ -1767,7 +1767,7 @@ pub fn parse_send_disc_structure_bus_encryption_sector_extents(
         ));
     }
     let extent_section_len = length - 2;
-    if extent_section_len % BUS_ENCRYPTION_SECTOR_EXTENT_LEN != 0 {
+    if !extent_section_len.is_multiple_of(BUS_ENCRYPTION_SECTOR_EXTENT_LEN) {
         return Err(AacsError::Truncated(
             "SEND_DISC_STRUCTURE Bus-Encryption Sector Extents record stride",
         ));
@@ -2894,8 +2894,7 @@ impl DriveCommand for MockDrive {
                                 }
                                 Some(_) => {
                                     return Err(AacsError::InvalidValue {
-                                        what:
-                                            "READ_DISC_STRUCTURE Format 0x86 pack 0 without Bus Key",
+                                        what: "READ_DISC_STRUCTURE Format 0x86 pack 0 without Bus Key",
                                         value: 0,
                                     });
                                 }
@@ -3582,9 +3581,11 @@ mod tests {
         let mut sds = SendDiscStructure::aacs_write_data_key(0);
         sds.format = 0x87;
         let wire = build_send_disc_structure_write_data_key(&[0u8; DATA_KEY_LEN]);
-        assert!(drive
-            .execute(&sds.cdb(), DataDirection::ToDevice, &wire, 0)
-            .is_err());
+        assert!(
+            drive
+                .execute(&sds.cdb(), DataDirection::ToDevice, &wire, 0)
+                .is_err()
+        );
     }
 
     #[test]
@@ -3595,9 +3596,11 @@ mod tests {
         let before = drive.write_data_key;
         let cdb = SendDiscStructure::aacs_write_data_key(0).cdb();
         let wire = build_send_disc_structure_write_data_key(&[0x55u8; DATA_KEY_LEN]);
-        assert!(drive
-            .execute(&cdb, DataDirection::FromDevice, &wire, 0)
-            .is_err());
+        assert!(
+            drive
+                .execute(&cdb, DataDirection::FromDevice, &wire, 0)
+                .is_err()
+        );
         assert_eq!(drive.write_data_key, before);
         assert_eq!(drive.last_write_data_key_sent, None);
     }

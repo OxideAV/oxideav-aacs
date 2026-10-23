@@ -22,9 +22,9 @@
 //!     layout).
 
 use oxideav_aacs::{
-    parse_bus_encryption_sector_extents_response, parse_volume_id_response,
     BusEncryptionSectorExtent, BusEncryptionSectorExtentsResponse, DataDirection, DriveCommand,
-    MockDrive, ReadDiscStructure,
+    MockDrive, ReadDiscStructure, parse_bus_encryption_sector_extents_response,
+    parse_volume_id_response,
 };
 
 /// 4-byte fixed wire header: `[Data Length:u16][Reserved:u8][Maximum:u8]`.

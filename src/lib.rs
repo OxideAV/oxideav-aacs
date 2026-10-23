@@ -53,37 +53,37 @@ pub mod volume;
 pub mod vuk;
 
 pub use crate::ake::{
-    aacs_la_pub_point, build_signed_certificate, bus_key_from_point, host_authenticate,
-    read_verified_volume_id, AkeResult, Certificate, DriveAuthState, HostCredentials,
-    AACS_LA_PUB_X, AACS_LA_PUB_Y, BUS_KEY_LEN, CERT_TYPE_DRIVE, CERT_TYPE_HOST,
+    AACS_LA_PUB_X, AACS_LA_PUB_Y, AkeResult, BUS_KEY_LEN, CERT_TYPE_DRIVE, CERT_TYPE_HOST,
+    Certificate, DriveAuthState, HostCredentials, aacs_la_pub_point, build_signed_certificate,
+    bus_key_from_point, host_authenticate, read_verified_volume_id,
 };
 pub use crate::cci::{
-    BasicCci, BindingType, Cacheable, Cci, CciAndOtherInfo, ContentOwnerAuthorizedOutputs,
-    CpsUnitUsageFile, EnhancedTitleUsage, KeyManagementOnline, TitleDate, TypeOfTitle,
-    BASIC_CCI_DATA_LEN, CCI_AREA_HEADER_LEN, CCI_HEADER_LEN, CCI_TYPE_BASIC,
+    BASIC_CCI_DATA_LEN, BasicCci, BindingType, CCI_AREA_HEADER_LEN, CCI_HEADER_LEN, CCI_TYPE_BASIC,
     CCI_TYPE_CONTENT_OWNER_OUTPUTS, CCI_TYPE_ENHANCED_TITLE_USAGE, CCI_TYPE_KEY_MANAGEMENT_ONLINE,
-    CCI_VERSION_0100, CONTENT_OWNER_OUTPUTS_DATA_LEN, ENHANCED_TITLE_USAGE_DATA_LEN,
-    KEY_MANAGEMENT_ONLINE_DATA_LEN, PRIMARY_CCI_AREA_LEN,
+    CCI_VERSION_0100, CONTENT_OWNER_OUTPUTS_DATA_LEN, Cacheable, Cci, CciAndOtherInfo,
+    ContentOwnerAuthorizedOutputs, CpsUnitUsageFile, ENHANCED_TITLE_USAGE_DATA_LEN,
+    EnhancedTitleUsage, KEY_MANAGEMENT_ONLINE_DATA_LEN, KeyManagementOnline, PRIMARY_CCI_AREA_LEN,
+    TitleDate, TypeOfTitle,
 };
 pub use crate::cht::{
-    hash_value_of_unit, ClipDescriptor, ContentHashTable, HASH_UNIT_SIZE, HASH_VALUE_SIZE,
-    LOGICAL_SECTORS_PER_HASH_UNIT, LOGICAL_SECTOR_SIZE,
+    ClipDescriptor, ContentHashTable, HASH_UNIT_SIZE, HASH_VALUE_SIZE, LOGICAL_SECTOR_SIZE,
+    LOGICAL_SECTORS_PER_HASH_UNIT, hash_value_of_unit,
 };
-pub use crate::content::{decrypt_aligned_unit, encrypt_aligned_unit, ALIGNED_UNIT_SIZE};
+pub use crate::content::{ALIGNED_UNIT_SIZE, decrypt_aligned_unit, encrypt_aligned_unit};
 pub use crate::content_certificate::{
-    usage_rules_hash, BdFormatSpecificSection, ContentCertificate, ContentCertificateId,
-    ContentSequenceNumber, CERTIFICATE_TYPE_FIRST_GEN, CONTENT_HASH_TABLE_DIGEST_LEN,
-    SIGNATURE_DATA_LEN,
+    BdFormatSpecificSection, CERTIFICATE_TYPE_FIRST_GEN, CONTENT_HASH_TABLE_DIGEST_LEN,
+    ContentCertificate, ContentCertificateId, ContentSequenceNumber, SIGNATURE_DATA_LEN,
+    usage_rules_hash,
 };
 pub use crate::crl::{
-    ContentRevocationList, CrlSegment, ManagedCopyServerCertificateId, RecordableMediaRevocation,
-    RecordableMediaType, RevocationRecord, CRL_HEADER_LEN, LIST_TYPE_FIRST_GEN,
-    RECORD_TYPE_CONTENT_CERTIFICATE_ID, RECORD_TYPE_MANAGED_COPY_SERVER_ID,
-    RECORD_TYPE_RMRR_PART_1, RECORD_TYPE_RMRR_PART_2, RECORD_TYPE_RMRR_PART_3,
-    REVOCATION_RECORD_LEN, SEGMENT_1_SIZE_MAX, SEGMENT_SIGNATURE_LEN,
+    CRL_HEADER_LEN, ContentRevocationList, CrlSegment, LIST_TYPE_FIRST_GEN,
+    ManagedCopyServerCertificateId, RECORD_TYPE_CONTENT_CERTIFICATE_ID,
+    RECORD_TYPE_MANAGED_COPY_SERVER_ID, RECORD_TYPE_RMRR_PART_1, RECORD_TYPE_RMRR_PART_2,
+    RECORD_TYPE_RMRR_PART_3, REVOCATION_RECORD_LEN, RecordableMediaRevocation, RecordableMediaType,
+    RevocationRecord, SEGMENT_1_SIZE_MAX, SEGMENT_SIGNATURE_LEN,
 };
 pub use crate::ec::{Fp, Point, U160};
-pub use crate::ecdsa::{sign, sign_with_k, verify, Signature};
+pub use crate::ecdsa::{Signature, sign, sign_with_k, verify};
 pub use crate::error::AacsError;
 pub use crate::keydb::{
     DeviceKeyRecord, DiscRecords, DriveCertRecord, HostCertRecord, KeyDb, KeyDbEntry, ParseReport,
@@ -93,6 +93,11 @@ pub use crate::mkb::{
     Mkb, MkbType, RevocationEntry, RevocationSignatureBlock, SubsetDifferenceEntry,
 };
 pub use crate::mmc::{
+    AacsFeatureDescriptor, AgidResponse, BindingNonceResponse, BusEncryptionSectorExtent,
+    BusEncryptionSectorExtentsResponse, CprmMkbPackResponse, DataDirection, DataKeysResponse,
+    DriveCertChallengeResponse, DriveCertResponse, DriveCommand, DriveKeyResponse,
+    GetConfiguration, MediaIdentifierResponse, MediaSerialNumberResponse, MkbPackResponse,
+    ReadDiscStructure, ReportKey, ScsiResponse, SendDiscStructure, SendKey, VolumeIdResponse,
     build_get_configuration_aacs_response, build_send_disc_structure_bus_encryption_sector_extents,
     build_send_disc_structure_write_data_key, build_send_key_host_cert_chal,
     build_send_key_host_key, find_aacs_feature_descriptor, parse_aacs_feature_descriptor,
@@ -103,11 +108,6 @@ pub use crate::mmc::{
     parse_send_disc_structure_bus_encryption_sector_extents,
     parse_send_disc_structure_write_data_key, parse_send_key_host_cert_chal,
     parse_send_key_host_key, parse_volume_id_response, validate_bus_encryption_sector_extents,
-    AacsFeatureDescriptor, AgidResponse, BindingNonceResponse, BusEncryptionSectorExtent,
-    BusEncryptionSectorExtentsResponse, CprmMkbPackResponse, DataDirection, DataKeysResponse,
-    DriveCertChallengeResponse, DriveCertResponse, DriveCommand, DriveKeyResponse,
-    GetConfiguration, MediaIdentifierResponse, MediaSerialNumberResponse, MkbPackResponse,
-    ReadDiscStructure, ReportKey, ScsiResponse, SendDiscStructure, SendKey, VolumeIdResponse,
 };
 // `MockDrive` is a `test-util`-gated synthetic-drive fixture, not part of
 // the default public API. See the `test-util` cargo feature.
@@ -116,8 +116,8 @@ pub use crate::mmc::{
 #[doc(hidden)]
 pub use crate::mmc::MockDrive;
 pub use crate::online::{
-    enhanced_title_key_message, recover_enhanced_title_key, title_binding_hash,
-    verify_enhanced_permission, ONLINE_TITLE_ID_LEN, PERMISSION_MESSAGE_LEN,
+    ONLINE_TITLE_ID_LEN, PERMISSION_MESSAGE_LEN, enhanced_title_key_message,
+    recover_enhanced_title_key, title_binding_hash, verify_enhanced_permission,
 };
 pub use crate::self_check::{aacs_la_pub_self_check, ake_ecdh_self_check, curve_self_check};
 // `ake_full_self_check` + `all_self_checks` drive the `test-util`-gated
@@ -127,11 +127,11 @@ pub use crate::self_check::{aacs_la_pub_self_check, ake_ecdh_self_check, curve_s
 #[doc(hidden)]
 pub use crate::self_check::{ake_full_self_check, all_self_checks};
 pub use crate::subdiff::{
-    aes_g3, applies_to_device, apply_key_conversion_data, derive_processing_key, SubsetDifference,
+    SubsetDifference, aes_g3, applies_to_device, apply_key_conversion_data, derive_processing_key,
 };
 pub use crate::unit_key::{CpsUnitRecord, UnitKeyFile, UnitKeyFileHeader};
 pub use crate::volume::{AacsVolume, CpsUnit, DeviceKey, TitleKey};
-pub use crate::vuk::{derive_vuk, Vuk};
+pub use crate::vuk::{Vuk, derive_vuk};
 
 /// Result alias used throughout the crate.
 pub type Result<T> = core::result::Result<T, AacsError>;

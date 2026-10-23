@@ -26,7 +26,7 @@
 
 use crate::aes::aes_h;
 use crate::ec::{
-    scalar_add, scalar_inv, scalar_mul, scalar_reduce, scalar_reduce_wide, Point, N, U160,
+    N, Point, U160, scalar_add, scalar_inv, scalar_mul, scalar_reduce, scalar_reduce_wide,
 };
 
 /// SHA-1 digest length in bytes (the AACS ECDSA hash, §2.1.5).
@@ -60,7 +60,7 @@ pub fn sha1(data: &[u8]) -> [u8; 20] {
     }
     msg.extend_from_slice(&bit_len.to_be_bytes());
 
-    for block in msg.chunks_exact(64) {
+    for block in msg.as_chunks::<64>().0 {
         let mut w = [0u32; 80];
         for (i, word) in w.iter_mut().take(16).enumerate() {
             *word = u32::from_be_bytes([

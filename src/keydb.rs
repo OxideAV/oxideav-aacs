@@ -422,46 +422,53 @@ impl KeyDb {
 }
 
 fn default_search_paths() -> Vec<std::path::PathBuf> {
+    search_paths_from(|k| std::env::var(k).ok())
+}
+
+/// [`default_search_paths`] with the environment lookup injected, so
+/// the search order can be exercised without mutating the process
+/// environment (`std::env::set_var` is not thread-safe).
+fn search_paths_from(var: impl Fn(&str) -> Option<String>) -> Vec<std::path::PathBuf> {
     use std::path::PathBuf;
     let mut out = Vec::new();
-    if let Ok(p) = std::env::var("OXIDEAV_AACS_KEYDB") {
-        if !p.is_empty() {
-            out.push(PathBuf::from(p));
-        }
+    if let Some(p) = var("OXIDEAV_AACS_KEYDB")
+        && !p.is_empty()
+    {
+        out.push(PathBuf::from(p));
     }
     #[cfg(target_os = "macos")]
-    if let Ok(home) = std::env::var("HOME") {
-        if !home.is_empty() {
-            out.push(
-                PathBuf::from(&home)
-                    .join("Library")
-                    .join("Preferences")
-                    .join("aacs")
-                    .join("KEYDB.cfg"),
-            );
-        }
+    if let Some(home) = var("HOME")
+        && !home.is_empty()
+    {
+        out.push(
+            PathBuf::from(&home)
+                .join("Library")
+                .join("Preferences")
+                .join("aacs")
+                .join("KEYDB.cfg"),
+        );
     }
-    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        if !xdg.is_empty() {
-            out.push(PathBuf::from(xdg).join("aacs").join("KEYDB.cfg"));
-        }
+    if let Some(xdg) = var("XDG_CONFIG_HOME")
+        && !xdg.is_empty()
+    {
+        out.push(PathBuf::from(xdg).join("aacs").join("KEYDB.cfg"));
     }
-    if let Ok(dirs) = std::env::var("XDG_CONFIG_DIRS") {
+    if let Some(dirs) = var("XDG_CONFIG_DIRS") {
         for d in dirs.split(':') {
             if !d.is_empty() {
                 out.push(PathBuf::from(d).join("aacs").join("KEYDB.cfg"));
             }
         }
     }
-    if let Ok(home) = std::env::var("HOME") {
-        if !home.is_empty() {
-            out.push(
-                PathBuf::from(home)
-                    .join(".config")
-                    .join("aacs")
-                    .join("KEYDB.cfg"),
-            );
-        }
+    if let Some(home) = var("HOME")
+        && !home.is_empty()
+    {
+        out.push(
+            PathBuf::from(home)
+                .join(".config")
+                .join("aacs")
+                .join("KEYDB.cfg"),
+        );
     }
     out
 }
@@ -624,7 +631,7 @@ fn parse_hex_var(value: &str, field_name: &str) -> Result<Vec<u8>, String> {
 }
 
 fn parse_hex_bytes(hex: &str) -> Option<Vec<u8>> {
-    if hex.len() % 2 != 0 {
+    if !hex.len().is_multiple_of(2) {
         return None;
     }
     let mut out = Vec::with_capacity(hex.len() / 2);
@@ -1196,26 +1203,18 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn macos_library_preferences_is_in_search_path() {
-        let saved_home = std::env::var_os("HOME");
-        std::env::set_var("HOME", "/Users/oxideav-test");
-        let saved_env = std::env::var_os("OXIDEAV_AACS_KEYDB");
-        std::env::remove_var("OXIDEAV_AACS_KEYDB");
-
-        let paths = default_search_paths();
+        // Inject the environment instead of mutating the process's:
+        // `OXIDEAV_AACS_KEYDB` unset, `HOME` fixed.
+        let paths = search_paths_from(|k| match k {
+            "HOME" => Some("/Users/oxideav-test".to_string()),
+            _ => None,
+        });
         let want =
             std::path::PathBuf::from("/Users/oxideav-test/Library/Preferences/aacs/KEYDB.cfg");
         assert!(
             paths.contains(&want),
             "macOS search path missing Library/Preferences entry: {paths:?}",
         );
-
-        match saved_home {
-            Some(v) => std::env::set_var("HOME", v),
-            None => std::env::remove_var("HOME"),
-        }
-        if let Some(v) = saved_env {
-            std::env::set_var("OXIDEAV_AACS_KEYDB", v);
-        }
     }
 
     // ---- `|`-leader record success tests --------------------------------

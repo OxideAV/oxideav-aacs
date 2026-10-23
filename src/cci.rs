@@ -289,13 +289,7 @@ impl TitleDate {
 
     fn parse(seven: &[u8]) -> Result<Self, AacsError> {
         // 7 bytes: YYYY (2 bytes BCD) MM (1) DD (1) hh (1) mm (1) TZ (1).
-        let nib = |b: u8, hi: bool| -> u8 {
-            if hi {
-                b >> 4
-            } else {
-                b & 0x0F
-            }
-        };
+        let nib = |b: u8, hi: bool| -> u8 { if hi { b >> 4 } else { b & 0x0F } };
         let bcd2 = |b: u8| -> u8 { nib(b, true) * 10 + nib(b, false) };
         let year = (nib(seven[0], true) as u16) * 1000
             + (nib(seven[0], false) as u16) * 100
@@ -772,11 +766,13 @@ mod tests {
             data: vec![0x11; CONTENT_OWNER_OUTPUTS_DATA_LEN],
         };
         let file = CpsUnitUsageFile {
-            primary: vec![KeyManagementOnline {
-                unit_key_status: 1,
-                binding_type: BindingType::Content,
-            }
-            .to_block()],
+            primary: vec![
+                KeyManagementOnline {
+                    unit_key_status: 1,
+                    binding_type: BindingType::Content,
+                }
+                .to_block(),
+            ],
             secondary: vec![big_block],
             has_secondary: true,
         };

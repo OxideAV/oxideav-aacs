@@ -16,9 +16,9 @@
 use oxideav_aacs::aes::{aes_128_ecb_decrypt, aes_128_ecb_encrypt};
 use oxideav_aacs::ake::{DriveAuthState, HostCredentials};
 use oxideav_aacs::{
-    build_send_disc_structure_write_data_key, build_signed_certificate, host_authenticate,
-    parse_data_keys_response, DataDirection, DriveCommand, MockDrive, Point, ReadDiscStructure,
-    SendDiscStructure, CERT_TYPE_DRIVE, CERT_TYPE_HOST, U160,
+    CERT_TYPE_DRIVE, CERT_TYPE_HOST, DataDirection, DriveCommand, MockDrive, Point,
+    ReadDiscStructure, SendDiscStructure, U160, build_send_disc_structure_write_data_key,
+    build_signed_certificate, host_authenticate, parse_data_keys_response,
 };
 
 const DATA_KEY_LEN: usize = 16;
@@ -152,9 +152,11 @@ fn send_write_data_key_without_bus_key_is_key_not_established() {
 
     let cdb = SendDiscStructure::aacs_write_data_key(0).cdb();
     let wire = build_send_disc_structure_write_data_key(&patterned_key(0x3C));
-    assert!(drive
-        .execute(&cdb, DataDirection::ToDevice, &wire, 0)
-        .is_err());
+    assert!(
+        drive
+            .execute(&cdb, DataDirection::ToDevice, &wire, 0)
+            .is_err()
+    );
     assert_eq!(drive.write_data_key, before);
     assert_eq!(drive.last_write_data_key_sent, None);
 }
@@ -267,14 +269,18 @@ fn malformed_parameter_list_is_rejected_and_state_unchanged() {
 
     let mut bad_length = vec![0x00, 0x22, 0x00, 0x00];
     bad_length.resize(20, 0x11);
-    assert!(drive
-        .execute(&cdb, DataDirection::ToDevice, &bad_length, 0)
-        .is_err());
+    assert!(
+        drive
+            .execute(&cdb, DataDirection::ToDevice, &bad_length, 0)
+            .is_err()
+    );
 
     let truncated = [0x00, 0x12, 0x00, 0x00, 0xAA, 0xBB, 0xCC];
-    assert!(drive
-        .execute(&cdb, DataDirection::ToDevice, &truncated, 0)
-        .is_err());
+    assert!(
+        drive
+            .execute(&cdb, DataDirection::ToDevice, &truncated, 0)
+            .is_err()
+    );
 
     assert_eq!(drive.write_data_key, before);
     assert_eq!(drive.last_write_data_key_sent, None);

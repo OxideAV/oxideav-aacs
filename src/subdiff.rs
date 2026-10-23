@@ -29,7 +29,7 @@
 //! one becomes available, and to keep the cryptographic primitives
 //! decoupled from the MKB I/O.
 
-use crate::aes::{aes_128_ecb_decrypt, BLOCK_SIZE};
+use crate::aes::{BLOCK_SIZE, aes_128_ecb_decrypt};
 
 /// AACS Triple-AES Generator seed register IV per Common spec §3.2.2
 /// Figure 3-3 (`s0 = 7B103C5DCB08C4E51A27B01799053BD9`).

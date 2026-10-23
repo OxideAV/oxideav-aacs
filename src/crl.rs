@@ -89,7 +89,7 @@
 
 use crate::content_certificate::ContentCertificateId;
 use crate::ec::Point;
-use crate::ecdsa::{verify as ecdsa_verify, Signature as EcdsaSignature};
+use crate::ecdsa::{Signature as EcdsaSignature, verify as ecdsa_verify};
 use crate::error::AacsError;
 
 /// First-generation AACS CRL List Type (PVB Table 2-2: "List Type:
@@ -396,8 +396,7 @@ impl ContentRevocationList {
                 .ok_or(AacsError::Truncated("CRL Segment minimum length"))?;
             if segment_size_usize < min_segment_len {
                 return Err(AacsError::InvalidValue {
-                    what:
-                        "CRL Segment Size (must accommodate 4-byte size field + 40-byte signature)",
+                    what: "CRL Segment Size (must accommodate 4-byte size field + 40-byte signature)",
                     value: u64::from(segment_size),
                 });
             }
@@ -612,7 +611,7 @@ impl ContentRevocationList {
 /// Segment Size field and its 40-byte Entity Signature. The byte
 /// length must be a multiple of [`REVOCATION_RECORD_LEN`].
 fn parse_revocation_record_set(bytes: &[u8]) -> Result<Vec<RevocationRecord>, AacsError> {
-    if bytes.len() % REVOCATION_RECORD_LEN != 0 {
+    if !bytes.len().is_multiple_of(REVOCATION_RECORD_LEN) {
         return Err(AacsError::InvalidValue {
             what: "CRL Revocation Record Set length (must be a multiple of 8)",
             value: bytes.len() as u64,

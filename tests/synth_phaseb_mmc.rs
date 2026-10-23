@@ -7,11 +7,11 @@
 //! file or randomly generated.
 
 use oxideav_aacs::{
+    DataDirection, DriveCommand, MockDrive, ReadDiscStructure, ReportKey, SendKey,
     build_send_key_host_cert_chal, build_send_key_host_key, parse_media_id_response,
     parse_media_serial_response, parse_mkb_pack_response, parse_report_key_agid,
     parse_report_key_drive_cert, parse_report_key_drive_cert_chal, parse_report_key_drive_key,
     parse_send_key_host_cert_chal, parse_send_key_host_key, parse_volume_id_response,
-    DataDirection, DriveCommand, MockDrive, ReadDiscStructure, ReportKey, SendKey,
 };
 
 // Spec-derived constants (mirrored from the public mmc module so the
@@ -92,7 +92,7 @@ fn send_key_host_cert_chal_roundtrip_through_mock_drive() {
     host_cert[1] = 0x00; // Reserved + flags clear (BEC=0, DKS=0)
     host_cert[2] = 0x00; // Length high byte
     host_cert[3] = 0x5C; // Length low byte = 92
-                         // Host ID = 0x0A0B0C0D0E0F (bytes 4..9)
+    // Host ID = 0x0A0B0C0D0E0F (bytes 4..9)
     host_cert[4] = 0x0A;
     host_cert[5] = 0x0B;
     host_cert[6] = 0x0C;

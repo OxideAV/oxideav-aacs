@@ -11,9 +11,9 @@
 //! (`0BA0F8DDFEA61FB3D8DF9F566A050F78`) per §2.1.2; the AES-H seed is
 //! [`H0_AACS`] (`2DC2DF39420321D0CEF1FE2374029D95`) per §2.1.4.
 
+use ::aes::Aes128;
 use ::aes::cipher::generic_array::GenericArray;
 use ::aes::cipher::{BlockDecrypt, BlockEncrypt, KeyInit};
-use ::aes::Aes128;
 
 /// AES-128 block size (and AACS-Common key size).
 pub const BLOCK_SIZE: usize = 16;
@@ -55,14 +55,14 @@ pub fn aes_128_ecb_decrypt(key: &[u8; 16], data: &[u8; 16]) -> [u8; 16] {
 /// not a multiple of [`BLOCK_SIZE`].
 pub fn aes_128_cbc_encrypt(key: &[u8; 16], iv: &[u8; 16], data: &[u8]) -> Vec<u8> {
     assert!(
-        data.len() % BLOCK_SIZE == 0,
+        data.len().is_multiple_of(BLOCK_SIZE),
         "AES-128-CBC requires data length multiple of 16; got {}",
         data.len()
     );
     let cipher = Aes128::new(GenericArray::from_slice(key));
     let mut out = Vec::with_capacity(data.len());
     let mut prev = *iv;
-    for chunk in data.chunks_exact(BLOCK_SIZE) {
+    for chunk in data.as_chunks::<BLOCK_SIZE>().0 {
         let mut block = [0u8; BLOCK_SIZE];
         for i in 0..BLOCK_SIZE {
             block[i] = chunk[i] ^ prev[i];
@@ -79,14 +79,14 @@ pub fn aes_128_cbc_encrypt(key: &[u8; 16], iv: &[u8; 16], data: &[u8]) -> Vec<u8
 /// not a multiple of [`BLOCK_SIZE`].
 pub fn aes_128_cbc_decrypt(key: &[u8; 16], iv: &[u8; 16], data: &[u8]) -> Vec<u8> {
     assert!(
-        data.len() % BLOCK_SIZE == 0,
+        data.len().is_multiple_of(BLOCK_SIZE),
         "AES-128-CBC requires data length multiple of 16; got {}",
         data.len()
     );
     let cipher = Aes128::new(GenericArray::from_slice(key));
     let mut out = Vec::with_capacity(data.len());
     let mut prev = *iv;
-    for chunk in data.chunks_exact(BLOCK_SIZE) {
+    for chunk in data.as_chunks::<BLOCK_SIZE>().0 {
         let mut block = [0u8; BLOCK_SIZE];
         block.copy_from_slice(chunk);
         let ct = block;
@@ -136,7 +136,7 @@ pub fn aes_h(data: &[u8]) -> [u8; 16] {
     padded.extend_from_slice(&bit_len.to_be_bytes());
 
     let mut h = H0_AACS;
-    for chunk in padded.chunks_exact(16) {
+    for chunk in padded.as_chunks::<16>().0 {
         let mut x = [0u8; 16];
         x.copy_from_slice(chunk);
         h = aes_g(&x, &h);
@@ -162,7 +162,7 @@ pub fn aes_128_cmac(key: &[u8; 16], data: &[u8]) -> [u8; 16] {
     let (n_blocks, complete_last) = if n_blocks == 0 {
         (1, false)
     } else {
-        (n_blocks, data.len() % BLOCK_SIZE == 0)
+        (n_blocks, data.len().is_multiple_of(BLOCK_SIZE))
     };
 
     // Last block: M_n XOR K1 (complete) or pad(M_n) XOR K2 (partial).

@@ -11,8 +11,8 @@
 use oxideav_aacs::ake::DriveAuthState;
 use oxideav_aacs::ake::HostCredentials;
 use oxideav_aacs::{
-    build_signed_certificate, host_authenticate, read_verified_volume_id, MockDrive, Point,
-    BUS_KEY_LEN, CERT_TYPE_DRIVE, CERT_TYPE_HOST, U160,
+    BUS_KEY_LEN, CERT_TYPE_DRIVE, CERT_TYPE_HOST, MockDrive, Point, U160, build_signed_certificate,
+    host_authenticate, read_verified_volume_id,
 };
 
 fn scalar(v: u32) -> U160 {

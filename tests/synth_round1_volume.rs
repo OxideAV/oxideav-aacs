@@ -3,7 +3,7 @@
 //! keys via a VUK, and decrypt a freshly-encrypted Aligned Unit back
 //! to the original plaintext.
 
-use oxideav_aacs::{encrypt_aligned_unit, AacsVolume, Vuk, ALIGNED_UNIT_SIZE};
+use oxideav_aacs::{ALIGNED_UNIT_SIZE, AacsVolume, Vuk, encrypt_aligned_unit};
 use std::fs;
 
 fn write_record(tag: u8, body: &[u8]) -> Vec<u8> {

@@ -56,15 +56,15 @@
 //! cleanly on this build.
 
 use crate::ake::{
-    aacs_la_pub_point, bus_key_from_point, AACS_LA_PUB_X, AACS_LA_PUB_Y, BUS_KEY_LEN,
+    AACS_LA_PUB_X, AACS_LA_PUB_Y, BUS_KEY_LEN, aacs_la_pub_point, bus_key_from_point,
 };
 // These items are used only by the `test-util`-gated `ake_full_self_check`.
 #[cfg(any(test, feature = "test-util"))]
 use crate::ake::{
-    build_signed_certificate, host_authenticate, DriveAuthState, HostCredentials, CERT_TYPE_DRIVE,
-    CERT_TYPE_HOST,
+    CERT_TYPE_DRIVE, CERT_TYPE_HOST, DriveAuthState, HostCredentials, build_signed_certificate,
+    host_authenticate,
 };
-use crate::ec::{scalar_add, scalar_inv, scalar_mul, Point, N, U160};
+use crate::ec::{N, Point, U160, scalar_add, scalar_inv, scalar_mul};
 use crate::error::AacsError;
 #[cfg(any(test, feature = "test-util"))]
 use crate::mmc::MockDrive;

@@ -6,14 +6,14 @@
 //! Every byte is synthesised in-source. No real AACS LA Entity public
 //! key, no disc fixture, no embedded key material.
 
+use oxideav_aacs::AacsError;
 use oxideav_aacs::content_certificate::ContentCertificateId;
 use oxideav_aacs::crl::{
-    ContentRevocationList, CrlSegment, ManagedCopyServerCertificateId, RecordableMediaRevocation,
-    RecordableMediaType, RevocationRecord, LIST_TYPE_FIRST_GEN, SEGMENT_SIGNATURE_LEN,
+    ContentRevocationList, CrlSegment, LIST_TYPE_FIRST_GEN, ManagedCopyServerCertificateId,
+    RecordableMediaRevocation, RecordableMediaType, RevocationRecord, SEGMENT_SIGNATURE_LEN,
 };
 use oxideav_aacs::ec::{Point, U160};
 use oxideav_aacs::ecdsa::sign;
-use oxideav_aacs::AacsError;
 
 fn small_scalar(v: u32) -> U160 {
     U160 {

@@ -6,14 +6,14 @@
 //! Every byte is synthesised in-source. No real AACS LA Content
 //! Certificate public key, no disc fixture, no embedded key material.
 
-use oxideav_aacs::cht::{hash_value_of_unit, ContentHashTable, HASH_UNIT_SIZE};
+use oxideav_aacs::AacsError;
+use oxideav_aacs::cht::{ContentHashTable, HASH_UNIT_SIZE, hash_value_of_unit};
 use oxideav_aacs::content_certificate::{
-    usage_rules_hash, BdFormatSpecificSection, ContentCertificate, ContentSequenceNumber,
-    CERTIFICATE_TYPE_FIRST_GEN, CONTENT_HASH_TABLE_DIGEST_LEN, SIGNATURE_DATA_LEN,
+    BdFormatSpecificSection, CERTIFICATE_TYPE_FIRST_GEN, CONTENT_HASH_TABLE_DIGEST_LEN,
+    ContentCertificate, ContentSequenceNumber, SIGNATURE_DATA_LEN, usage_rules_hash,
 };
 use oxideav_aacs::ec::{Point, U160};
 use oxideav_aacs::ecdsa::sign;
-use oxideav_aacs::AacsError;
 
 /// Helper: synthesise a Hash Unit's worth of deterministic bytes.
 fn synth_hash_unit(seed: u8) -> Vec<u8> {

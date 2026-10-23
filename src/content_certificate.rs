@@ -81,7 +81,7 @@
 
 use crate::cht::HASH_VALUE_SIZE;
 use crate::ec::Point;
-use crate::ecdsa::{sha1, verify, Signature, SHA1_LEN};
+use crate::ecdsa::{SHA1_LEN, Signature, sha1, verify};
 use crate::error::AacsError;
 
 /// Fixed Certificate Type byte value indicating a first-generation
@@ -388,7 +388,9 @@ impl ContentCertificate {
         // `(L + 2) ≡ 0 (mod 4)`. The spec carves out `L = 0` as a
         // special case where 2 alignment bytes are appended; both `L=0`
         // and `L ≡ 2 (mod 4)` are valid on-disc encodings.
-        if length_format_specific_section != 0 && (length_format_specific_section + 2) % 4 != 0 {
+        if length_format_specific_section != 0
+            && !(length_format_specific_section + 2).is_multiple_of(4)
+        {
             return Err(AacsError::InvalidValue {
                 what: "Content Certificate Length_Format_Specific_Section (must be 0 or ≡ 2 mod 4)",
                 value: length_format_specific_section as u64,

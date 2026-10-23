@@ -1,7 +1,7 @@
 //! MKB parser tests against hand-crafted byte streams built from the
 //! AACS Common spec §3.2.5 record definitions.
 
-use oxideav_aacs::{aes_g3, Mkb, MkbType};
+use oxideav_aacs::{Mkb, MkbType, aes_g3};
 
 fn write_record(tag: u8, body: &[u8]) -> Vec<u8> {
     let length = 4 + body.len();

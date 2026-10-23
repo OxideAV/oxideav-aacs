@@ -16,7 +16,7 @@
 //! independently.
 
 use oxideav_aacs::{
-    parse_report_key_binding_nonce, DataDirection, DriveCommand, MockDrive, ReportKey,
+    DataDirection, DriveCommand, MockDrive, ReportKey, parse_report_key_binding_nonce,
 };
 
 const BINDING_NONCE_LEN: usize = 16;

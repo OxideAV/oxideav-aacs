@@ -6,8 +6,8 @@
 //! disc-derived material: every Hash Unit is generated from a seed.
 
 use oxideav_aacs::{
-    encrypt_aligned_unit, hash_value_of_unit, AacsError, ClipDescriptor, ContentHashTable,
-    ALIGNED_UNIT_SIZE, HASH_UNIT_SIZE,
+    ALIGNED_UNIT_SIZE, AacsError, ClipDescriptor, ContentHashTable, HASH_UNIT_SIZE,
+    encrypt_aligned_unit, hash_value_of_unit,
 };
 
 /// A Hash Unit is 96 Logical Sectors = 196608 bytes = exactly 32

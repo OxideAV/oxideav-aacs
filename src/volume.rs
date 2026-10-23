@@ -27,7 +27,7 @@
 //! these files in `\AACS` directory cannot be read").
 
 use crate::aes::aes_128_ecb_decrypt;
-use crate::content::{decrypt_aligned_unit, ALIGNED_UNIT_SIZE};
+use crate::content::{ALIGNED_UNIT_SIZE, decrypt_aligned_unit};
 use crate::error::AacsError;
 use crate::keydb::KeyDb;
 use crate::mkb::Mkb;
@@ -232,8 +232,8 @@ impl AacsVolume {
         device_key: &DeviceKey,
     ) -> Result<[u8; 16], AacsError> {
         use crate::subdiff::{
-            applies_to_device, derive_processing_key, media_key_from_processing_key,
-            SubsetDifference,
+            SubsetDifference, applies_to_device, derive_processing_key,
+            media_key_from_processing_key,
         };
         // §3.2.3 distinguishes between *device numbers* (the leaf
         // identifier of the device) and *the key's* `uv` (which

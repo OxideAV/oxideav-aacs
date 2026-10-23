@@ -1,8 +1,8 @@
 [package]
 name = "oxideav-aacs"
 version = "0.1.3"
-edition = "2021"
-rust-version = "1.80"
+edition = "2024"
+rust-version = "1.95"
 license = "MIT"
 authors = ["Mark Karpeles"]
 description = "Clean-room AACS Common 0.953 + BD-Prerecorded 0.953 decryption library — KEYDB.cfg / MKB / Unit_Key_RO.inf parsers, AES-128-CBC content scrambling, Subset-Difference tree walk, VUK derivation, Title Key unwrap"

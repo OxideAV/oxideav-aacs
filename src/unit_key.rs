@@ -103,7 +103,7 @@ impl UnitKeyFile {
                 available: bytes.len(),
             });
         }
-        if kbs % 16 != 0 {
+        if !kbs.is_multiple_of(16) {
             return Err(AacsError::InvalidValue {
                 what: "Unit_Key_Block_start_address (not 16-byte aligned)",
                 value: kbs as u64,

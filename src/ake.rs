@@ -33,10 +33,10 @@ use crate::ec::{Point, U160};
 use crate::ecdsa::{self, Signature};
 use crate::error::AacsError;
 use crate::mmc::{
-    build_send_key_host_cert_chal, build_send_key_host_key, parse_report_key_agid,
-    parse_report_key_drive_cert_chal, parse_report_key_drive_key, DataDirection, DriveCommand,
-    ReadDiscStructure, ReportKey, SendKey, DRIVE_CERT_LEN, EC_POINT_LEN, EC_SIG_LEN, HOST_CERT_LEN,
-    HOST_NONCE_LEN,
+    DRIVE_CERT_LEN, DataDirection, DriveCommand, EC_POINT_LEN, EC_SIG_LEN, HOST_CERT_LEN,
+    HOST_NONCE_LEN, ReadDiscStructure, ReportKey, SendKey, build_send_key_host_cert_chal,
+    build_send_key_host_key, parse_report_key_agid, parse_report_key_drive_cert_chal,
+    parse_report_key_drive_key,
 };
 
 // ---------------------------------------------------------------------

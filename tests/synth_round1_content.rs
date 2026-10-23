@@ -1,6 +1,6 @@
 //! Content scrambling roundtrip tests.
 
-use oxideav_aacs::{decrypt_aligned_unit, encrypt_aligned_unit, AacsError, ALIGNED_UNIT_SIZE};
+use oxideav_aacs::{ALIGNED_UNIT_SIZE, AacsError, decrypt_aligned_unit, encrypt_aligned_unit};
 
 fn deterministic(seed: u8, n: usize) -> Vec<u8> {
     (0..n).map(|i| (i as u8).wrapping_add(seed)).collect()

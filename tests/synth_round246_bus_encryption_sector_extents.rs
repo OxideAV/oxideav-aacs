@@ -16,8 +16,8 @@
 //! from values defined in this file.
 
 use oxideav_aacs::{
-    parse_bus_encryption_sector_extents_response, BusEncryptionSectorExtent, DataDirection,
-    DriveCommand, MockDrive, ReadDiscStructure,
+    BusEncryptionSectorExtent, DataDirection, DriveCommand, MockDrive, ReadDiscStructure,
+    parse_bus_encryption_sector_extents_response,
 };
 
 const EXTENT_RECORD_LEN: usize = 16;
