@@ -12,8 +12,7 @@
 //! [`H0_AACS`] (`2DC2DF39420321D0CEF1FE2374029D95`) per §2.1.4.
 
 use ::aes::Aes128;
-use ::aes::cipher::generic_array::GenericArray;
-use ::aes::cipher::{BlockDecrypt, BlockEncrypt, KeyInit};
+use ::aes::cipher::{BlockCipherDecrypt, BlockCipherEncrypt, KeyInit};
 
 /// AES-128 block size (and AACS-Common key size).
 pub const BLOCK_SIZE: usize = 16;
@@ -35,18 +34,18 @@ pub const H0_AACS: [u8; 16] = [
 /// AES-128 ECB encryption of a single 16-byte block (`AES-128E(k, d)`
 /// per §2.1.1).
 pub fn aes_128_ecb_encrypt(key: &[u8; 16], data: &[u8; 16]) -> [u8; 16] {
-    let cipher = Aes128::new(GenericArray::from_slice(key));
+    let cipher = Aes128::new(key.into());
     let mut out = *data;
-    cipher.encrypt_block(GenericArray::from_mut_slice(&mut out));
+    cipher.encrypt_block((&mut out).into());
     out
 }
 
 /// AES-128 ECB decryption of a single 16-byte block (`AES-128D(k, d)`
 /// per §2.1.1).
 pub fn aes_128_ecb_decrypt(key: &[u8; 16], data: &[u8; 16]) -> [u8; 16] {
-    let cipher = Aes128::new(GenericArray::from_slice(key));
+    let cipher = Aes128::new(key.into());
     let mut out = *data;
-    cipher.decrypt_block(GenericArray::from_mut_slice(&mut out));
+    cipher.decrypt_block((&mut out).into());
     out
 }
 
@@ -59,7 +58,7 @@ pub fn aes_128_cbc_encrypt(key: &[u8; 16], iv: &[u8; 16], data: &[u8]) -> Vec<u8
         "AES-128-CBC requires data length multiple of 16; got {}",
         data.len()
     );
-    let cipher = Aes128::new(GenericArray::from_slice(key));
+    let cipher = Aes128::new(key.into());
     let mut out = Vec::with_capacity(data.len());
     let mut prev = *iv;
     for chunk in data.as_chunks::<BLOCK_SIZE>().0 {
@@ -67,7 +66,7 @@ pub fn aes_128_cbc_encrypt(key: &[u8; 16], iv: &[u8; 16], data: &[u8]) -> Vec<u8
         for i in 0..BLOCK_SIZE {
             block[i] = chunk[i] ^ prev[i];
         }
-        cipher.encrypt_block(GenericArray::from_mut_slice(&mut block));
+        cipher.encrypt_block((&mut block).into());
         out.extend_from_slice(&block);
         prev = block;
     }
@@ -83,14 +82,14 @@ pub fn aes_128_cbc_decrypt(key: &[u8; 16], iv: &[u8; 16], data: &[u8]) -> Vec<u8
         "AES-128-CBC requires data length multiple of 16; got {}",
         data.len()
     );
-    let cipher = Aes128::new(GenericArray::from_slice(key));
+    let cipher = Aes128::new(key.into());
     let mut out = Vec::with_capacity(data.len());
     let mut prev = *iv;
     for chunk in data.as_chunks::<BLOCK_SIZE>().0 {
         let mut block = [0u8; BLOCK_SIZE];
         block.copy_from_slice(chunk);
         let ct = block;
-        cipher.decrypt_block(GenericArray::from_mut_slice(&mut block));
+        cipher.decrypt_block((&mut block).into());
         for i in 0..BLOCK_SIZE {
             block[i] ^= prev[i];
         }
@@ -261,6 +260,31 @@ mod tests {
     #[test]
     fn aes_h_empty_message_does_not_panic() {
         let _ = aes_h(b"");
+    }
+
+    // FIPS-197 Appendix C.1 (AES-128) example vector.
+    #[test]
+    fn aes_128_fips197_c1_vector() {
+        let key: [u8; 16] = core::array::from_fn(|i| i as u8);
+        let pt: [u8; 16] = core::array::from_fn(|i| (i as u8) * 0x11);
+        let ct = [
+            0x69, 0xc4, 0xe0, 0xd8, 0x6a, 0x7b, 0x04, 0x30, 0xd8, 0xcd, 0xb7, 0x80, 0x70, 0xb4,
+            0xc5, 0x5a,
+        ];
+        assert_eq!(aes_128_ecb_encrypt(&key, &pt), ct);
+        assert_eq!(aes_128_ecb_decrypt(&key, &ct), pt);
+        // Two-block CBC: the first block with an all-zero IV is the ECB
+        // vector; decryption inverts the whole chain.
+        let mut data = pt.to_vec();
+        data.extend_from_slice(&pt);
+        let enc = aes_128_cbc_encrypt(&key, &[0u8; 16], &data);
+        assert_eq!(enc[..16], ct);
+        let mut xored = pt;
+        for (x, c) in xored.iter_mut().zip(ct) {
+            *x ^= c;
+        }
+        assert_eq!(enc[16..], aes_128_ecb_encrypt(&key, &xored));
+        assert_eq!(aes_128_cbc_decrypt(&key, &[0u8; 16], &enc), data);
     }
 
     // NIST SP 800-38B, Appendix D.1 (AES-128) published example vectors.

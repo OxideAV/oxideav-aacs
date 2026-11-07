@@ -30,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SubsetDiffIndex`, `SubsetDifferenceEntry`, `UnitKeyFile`,
   `UnitKeyFileHeader` and `VariantNumberRecord`.
 - `#[doc(hidden)]` on the internal `aes` primitive module.
+- Dependency consolidation (#7): the AES-128 block primitive moves to
+  `aes` 0.9 (RustCrypto `cipher` 0.5 generation), and the `sha1` crate
+  is dropped — the KEYDB.cfg disc identifier now uses the crate's own
+  FIPS 180-2 SHA-1 (already the ECDSA digest), so no `digest` crate is
+  pulled at all. Behaviour is unchanged; FIPS-197 C.1 AES-128 and
+  FIPS 180-2 A.1/A.2 SHA-1 vectors are pinned as regression tests.
 
 ### Changed
 

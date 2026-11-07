@@ -57,18 +57,34 @@ pub fn derive_vuk(media_key: &[u8; 16], volume_id: &[u8; 16]) -> Vuk {
 /// Pass the whole file's bytes — no header skipping, no padding
 /// stripping.
 pub fn disc_id_from_unit_key_file_bytes(bytes: &[u8]) -> [u8; 20] {
-    use sha1::{Digest, Sha1};
-    let mut h = Sha1::new();
-    h.update(bytes);
-    let d = h.finalize();
-    let mut out = [0u8; 20];
-    out.copy_from_slice(&d);
-    out
+    crate::ecdsa::sha1(bytes)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn disc_id_is_plain_sha1_of_file_bytes() {
+        // FIPS 180-2 Appendix A.1 one-block message "abc".
+        assert_eq!(
+            disc_id_from_unit_key_file_bytes(b"abc"),
+            [
+                0xa9, 0x99, 0x3e, 0x36, 0x47, 0x06, 0x81, 0x6a, 0xba, 0x3e, 0x25, 0x71, 0x78, 0x50,
+                0xc2, 0x6c, 0x9c, 0xd0, 0xd8, 0x9d
+            ]
+        );
+        // FIPS 180-2 Appendix A.2 multi-block message.
+        assert_eq!(
+            disc_id_from_unit_key_file_bytes(
+                b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"
+            ),
+            [
+                0x84, 0x98, 0x3e, 0x44, 0x1c, 0x3b, 0xd2, 0x6e, 0xba, 0xae, 0x4a, 0xa1, 0xf9, 0x51,
+                0x29, 0xe5, 0xe5, 0x46, 0x70, 0xf1
+            ]
+        );
+    }
 
     #[test]
     fn vuk_derivation_is_deterministic() {

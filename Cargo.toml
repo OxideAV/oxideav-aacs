@@ -36,15 +36,11 @@ test-util = []
 oxideav-core = { version = "0.1", optional = true }
 
 # RustCrypto pure-Rust AES-128 (ECB block primitive). AACS-CBC is built
-# on top of `BlockEncrypt`/`BlockDecrypt` directly — we do not pull
+# on top of `BlockCipherEncrypt`/`BlockCipherDecrypt` directly — we do not pull
 # `aes` mode crates because AACS-CBC and ECB-wrap need raw block access
 # with custom IV / chaining rules per Common spec §2.1.2 and
 # BD-Prerecorded §3.10.
-aes = "0.8"
-
-# Pure-Rust SHA-1, used by `disc_id_for_volume_id` per the libbluray
-# KEYDB.cfg convention: disc_id = SHA-1(AACS Volume Identifier).
-sha1 = "0.10"
+aes = "0.9"
 
 [dev-dependencies]
 # Self dev-dependency: enables the `test-util` feature on the library for
