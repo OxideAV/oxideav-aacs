@@ -45,6 +45,30 @@ pub struct KeyDbEntry {
     pub unit_keys: Vec<(u16, [u8; 16])>,
 }
 
+impl KeyDbEntry {
+    /// Build an entry with no label and no unit keys.
+    pub fn new(disc_id: [u8; 20], vuk: Vuk) -> Self {
+        KeyDbEntry {
+            disc_id,
+            vuk,
+            label: None,
+            unit_keys: Vec::new(),
+        }
+    }
+
+    /// Set the human-readable label.
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    /// Replace the `(cps_unit, key)` unit-key list.
+    pub fn with_unit_keys(mut self, unit_keys: Vec<(u16, [u8; 16])>) -> Self {
+        self.unit_keys = unit_keys;
+        self
+    }
+}
+
 /// A `| DK |` Device Key record per AACS Common Final 0.953 §3.2.1
 /// (Subset-Difference tree) and the format doc's "DK" section.
 ///
@@ -66,11 +90,36 @@ pub struct DeviceKeyRecord {
     pub comment: Option<String>,
 }
 
+impl DeviceKeyRecord {
+    /// Build a record with no comment.
+    pub fn new(
+        device_key: [u8; 16],
+        device_node: [u8; 2],
+        key_uv: [u8; 4],
+        key_u_mask_shift: u8,
+    ) -> Self {
+        DeviceKeyRecord {
+            device_key,
+            device_node,
+            key_uv,
+            key_u_mask_shift,
+            comment: None,
+        }
+    }
+
+    /// Set the trailing comment.
+    pub fn with_comment(mut self, comment: impl Into<String>) -> Self {
+        self.comment = Some(comment.into());
+        self
+    }
+}
+
 /// A `| PK |` Processing Key record. 16-byte AES-128 value, the output
 /// of running the Subset-Difference walk against a particular MKB, plus
 /// the trailing free-form comment that typically records the MKB
 /// version range the key applies to.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ProcessingKey {
     /// 16-byte AES-128 Processing Key.
     pub processing_key: [u8; 16],
@@ -81,6 +130,7 @@ pub struct ProcessingKey {
 /// A `| HC |` Host Certificate + private key record per AACS Common
 /// Final 0.953 §A.1 / §A.3 and the format doc's "HC" section.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct HostCertRecord {
     /// 20-byte ECDSA-secp160r1 private-key scalar.
     pub host_priv_key: [u8; 20],
@@ -124,6 +174,7 @@ impl HostCertRecord {
 /// A `| DC |` Drive Certificate + private key record (drive side of
 /// the BD-AACS Drive-Host authentication).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct DriveCertRecord {
     /// 20-byte ECDSA-secp160r1 private-key scalar.
     pub drive_priv_key: [u8; 20],
@@ -137,6 +188,7 @@ pub struct DriveCertRecord {
 /// VID / VUK / MEK / TK / KCD rows that follow until the next
 /// `DISCID` row.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct DiscRecords {
     /// 20-byte disc identifier (from the `| DISCID |` row).
     pub disc_id: [u8; 20],
@@ -161,6 +213,7 @@ pub struct DiscRecords {
 /// VID/VUK/MEK/TK/KCD groups). Use the accessors to read each
 /// collection back.
 #[derive(Debug, Default, Clone)]
+#[non_exhaustive]
 pub struct KeyDb {
     by_disc_id: BTreeMap<[u8; 20], KeyDbEntry>,
     device_keys: Vec<DeviceKeyRecord>,
@@ -178,6 +231,7 @@ pub struct KeyDb {
 /// ripping tool can list which `KEYDB.cfg` entries were rejected and
 /// why, instead of silently ignoring them on stderr.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SkippedLine {
     /// 1-based line number in the original input.
     pub line_number: usize,
@@ -186,6 +240,17 @@ pub struct SkippedLine {
     pub snippet: String,
     /// `Display`-formatted parse error returned for that line.
     pub reason: String,
+}
+
+impl SkippedLine {
+    /// Build a skipped-line record.
+    pub fn new(line_number: usize, snippet: impl Into<String>, reason: impl Into<String>) -> Self {
+        SkippedLine {
+            line_number,
+            snippet: snippet.into(),
+            reason: reason.into(),
+        }
+    }
 }
 
 /// Outcome of a tolerant KEYDB.cfg parse.
@@ -198,6 +263,7 @@ pub struct SkippedLine {
 /// loaded N records but skipped M lines for the following reasons"
 /// summary without having to re-run the parser.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ParseReport {
     /// Lines the parser couldn't interpret, in source order.
     pub skipped: Vec<SkippedLine>,

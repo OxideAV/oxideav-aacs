@@ -53,18 +53,14 @@ fn unwrap_title_keys_recovers_originals() {
         .cps_units
         .iter()
         .enumerate()
-        .map(|(i, rec)| CpsUnit {
-            id: (i + 1) as u16,
-            encrypted_title_key: rec.encrypted_cps_unit_key,
-            title_key: None,
-        })
+        .map(|(i, rec)| CpsUnit::new((i + 1) as u16, rec.encrypted_cps_unit_key))
         .collect();
-    let mut volume = AacsVolume {
-        mkb: oxideav_aacs::Mkb::default(),
-        unit_key_file: parsed,
-        cps_units,
-        disc_root: std::path::PathBuf::new(),
-    };
+    let mut volume = AacsVolume::new(
+        oxideav_aacs::Mkb::default(),
+        parsed,
+        std::path::PathBuf::new(),
+    )
+    .with_cps_units(cps_units);
     volume.unwrap_title_keys(&vuk).unwrap();
     for (i, tk) in tks.iter().enumerate() {
         assert_eq!(volume.cps_units[i].title_key, Some(TitleKey(*tk)));

@@ -89,6 +89,7 @@ pub struct ClipDescriptor {
 
 /// A parsed Content Hash Table for one physical layer.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ContentHashTable {
     /// The `Number_of_Digests` per-Clip descriptors (Table 2-2 first
     /// loop).

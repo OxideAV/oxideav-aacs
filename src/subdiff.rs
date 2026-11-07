@@ -51,6 +51,7 @@ pub const AES_G3_SEED_S0: [u8; 16] = [
 /// All three are computed as `AES-128D(k, s0 + i) XOR (s0 + i)` for
 /// `i = 0, 1, 2`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct AesG3Output {
     /// Subsidiary Device Key for the left child of the current node.
     pub left_child: [u8; 16],

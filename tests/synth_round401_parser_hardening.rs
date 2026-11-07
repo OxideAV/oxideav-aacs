@@ -271,8 +271,8 @@ fn unit_key_smart_mutations_never_panic() {
 /// loop-count and per-block `data_length` fields are the mutation
 /// targets that drive the Primary/Secondary area walk.
 fn valid_usage_file() -> Vec<u8> {
-    CpsUnitUsageFile {
-        primary: vec![
+    CpsUnitUsageFile::new(
+        vec![
             BasicCci {
                 epn_unasserted: true,
                 cci: Cci::CopyOneGeneration,
@@ -303,14 +303,13 @@ fn valid_usage_file() -> Vec<u8> {
             }
             .to_block(),
         ],
-        secondary: vec![
+        Some(vec![
             ContentOwnerAuthorizedOutputs {
                 output_control_bits: [0x5A; 16],
             }
             .to_block(),
-        ],
-        has_secondary: true,
-    }
+        ]),
+    )
     .to_bytes()
 }
 

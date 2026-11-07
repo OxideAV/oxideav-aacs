@@ -26,6 +26,7 @@ use crate::error::AacsError;
 
 /// Parsed `Unit_Key_File_Header()` per BD-Prerecorded §3.9.3 Table 3-13.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct UnitKeyFileHeader {
     /// `Application_Type` — `0x01` for BDMV (the only value the spec
     /// currently defines).
@@ -40,8 +41,27 @@ pub struct UnitKeyFileHeader {
     pub bd_directories: Vec<BdDirectoryHeader>,
 }
 
+impl UnitKeyFileHeader {
+    /// Build a header with no BD-directory listings.
+    pub fn new(application_type: u8, num_of_bd_directory: u8, use_skb_unified_mkb: bool) -> Self {
+        UnitKeyFileHeader {
+            application_type,
+            num_of_bd_directory,
+            use_skb_unified_mkb,
+            bd_directories: Vec::new(),
+        }
+    }
+
+    /// Replace the per-BD-directory listings.
+    pub fn with_bd_directories(mut self, bd_directories: Vec<BdDirectoryHeader>) -> Self {
+        self.bd_directories = bd_directories;
+        self
+    }
+}
+
 /// Per BD-Application-directory listing inside `Unit_Key_File_Header()`.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct BdDirectoryHeader {
     /// CPS_Unit_number that First Playback maps to (0 if none).
     pub cps_unit_number_for_first_playback: u16,
@@ -56,6 +76,7 @@ pub struct BdDirectoryHeader {
 /// One per-CPS-Unit record from `Unit_Key_Block()` per BD-Prerecorded
 /// §3.9.3 Table 3-15.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct CpsUnitRecord {
     /// `MAC of Pre-recorded Media Serial Number` per spec text:
     /// `CMAC(K_cu, PMSN)`. All-zero when this CPS Unit is not bound
@@ -70,6 +91,7 @@ pub struct CpsUnitRecord {
 
 /// A parsed `Unit_Key_RO.inf` file.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct UnitKeyFile {
     /// `Unit_Key_Block_start_address` field — byte offset from the
     /// start of the file at which `Unit_Key_Block()` begins. Always
@@ -82,6 +104,28 @@ pub struct UnitKeyFile {
 }
 
 impl UnitKeyFile {
+    /// Build a unit-key file around `header` with no CPS-unit records
+    /// and a `Unit_Key_Block_start_address` of 0.
+    pub fn new(header: UnitKeyFileHeader) -> Self {
+        UnitKeyFile {
+            unit_key_block_start_address: 0,
+            header,
+            cps_units: Vec::new(),
+        }
+    }
+
+    /// Set `Unit_Key_Block_start_address`.
+    pub fn with_unit_key_block_start_address(mut self, v: u32) -> Self {
+        self.unit_key_block_start_address = v;
+        self
+    }
+
+    /// Replace the per-CPS-Unit records.
+    pub fn with_cps_units(mut self, cps_units: Vec<CpsUnitRecord>) -> Self {
+        self.cps_units = cps_units;
+        self
+    }
+
     /// Parse a `Unit_Key_RO.inf` byte stream per BD-Prerecorded spec
     /// §3.9.3.
     pub fn parse(bytes: &[u8]) -> Result<Self, AacsError> {

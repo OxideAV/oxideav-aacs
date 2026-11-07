@@ -67,6 +67,7 @@ const CERT_SIGNED_BODY_LEN: usize = 52;
 /// A parsed AACS certificate (Drive or Host) — a thin view over the
 /// 92-byte on-wire form with the public key extracted as a curve point.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Certificate {
     /// Certificate Type byte ([`CERT_TYPE_DRIVE`] / [`CERT_TYPE_HOST`]).
     pub cert_type: u8,
@@ -192,8 +193,20 @@ pub struct HostCredentials {
     pub aacs_la_pub: Point,
 }
 
+impl HostCredentials {
+    /// Bundle the host certificate, private key and AACS LA public key.
+    pub fn new(host_cert: [u8; 92], host_priv: U160, aacs_la_pub: Point) -> Self {
+        HostCredentials {
+            host_cert,
+            host_priv,
+            aacs_la_pub,
+        }
+    }
+}
+
 /// Outcome of a completed Host-side authentication.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct AkeResult {
     /// The negotiated 128-bit Bus Key.
     pub bus_key: [u8; BUS_KEY_LEN],
@@ -332,6 +345,7 @@ pub fn host_authenticate<D: DriveCommand>(
 /// host material captured across the multi-command exchange. A real
 /// Licensed Drive keeps this per-AGID; the mock keeps a single instance.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct DriveAuthState {
     /// 92-byte signed Drive Certificate (Table 4-1).
     pub drive_cert: [u8; 92],

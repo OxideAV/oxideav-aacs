@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Constructors and builders for records that callers assemble:
+  `AacsVolume::new` + `with_cps_units`, `UnitKeyFile::new` +
+  `with_unit_key_block_start_address` / `with_cps_units`,
+  `UnitKeyFileHeader::new` + `with_bd_directories`, `CpsUnit::new`,
+  `CpsUnitUsageFile::new`, `SkippedLine::new`, `KeyDbEntry::new` +
+  `with_label` / `with_unit_keys`, `DeviceKeyRecord::new` + `with_comment`,
+  `DeviceKey::new` + `with_device_node`, `HostCredentials::new`,
+  `ScsiResponse::new`.
+
+### Changed
+
+- `#[non_exhaustive]` on the growable enums `BindingType`, `MkbType` and
+  `RevocationRecord`, and on the parsed / state records `AacsVolume`,
+  `AesG3Output`, `AkeResult`, `BdDirectoryHeader`, `CciAndOtherInfo`,
+  `Certificate`, `ContentHashTable`, `CpsUnit`, `CpsUnitRecord`,
+  `CpsUnitUsageFile`, `DiscRecords`, `DriveAuthState`, `DriveCertRecord`,
+  `HostCertRecord`, `KeyDb`, `Mkb`, `ParseReport`, `ProcessingKey`,
+  `RevocationEntry`, `RevocationSignatureBlock`, `SkippedLine`,
+  `SubsetDiffIndex`, `SubsetDifferenceEntry`, `UnitKeyFile`,
+  `UnitKeyFileHeader` and `VariantNumberRecord`.
+- `#[doc(hidden)]` on the internal `aes` primitive module.
+
 ### Changed
 
 - edition 2024, MSRV 1.95.

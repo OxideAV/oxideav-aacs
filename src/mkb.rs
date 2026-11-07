@@ -25,6 +25,7 @@ use crate::error::AacsError;
 
 /// MKB Type tag per Common spec §3.2.5.1.1 Table 3-2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum MkbType {
     /// `00031003` — Type 3, a normal AACS Recordable Media MKB.
     /// Used to directly calculate the Media Key.
@@ -115,6 +116,7 @@ impl MkbType {
 /// One entry in a Host or Drive Revocation List (Common spec
 /// §3.2.5.1.2 Table 3-4): 2-byte range + 6-byte ID.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct RevocationEntry {
     /// Number of additional IDs that follow `id` in the revoked range.
     /// `range == 0` means only `id` is revoked.
@@ -133,6 +135,7 @@ pub struct RevocationEntry {
 /// ending with the byte immediately preceding the signature" —
 /// cumulatively for each block, so block N covers blocks 1..=N.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct RevocationSignatureBlock {
     /// Number of entries in this signature block as declared by the
     /// `Number of Entries in this Signature Block` field (Common spec
@@ -154,6 +157,7 @@ pub struct RevocationSignatureBlock {
 /// One entry in the Explicit Subset-Difference Record (Common spec
 /// §3.2.5.1.5 Table 3-7): 1-byte u-mask + 4-byte uv.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SubsetDifferenceEntry {
     /// Number of low-order zero bits in `m_u`.
     pub u_mask_zero_bits: u8,
@@ -163,6 +167,7 @@ pub struct SubsetDifferenceEntry {
 
 /// A parsed Media Key Block.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct Mkb {
     /// Type tag from the mandatory leading Type-and-Version Record
     /// (record type `0x10`).
@@ -226,6 +231,7 @@ pub struct Mkb {
 
 /// Subset-Difference Index Record (Common spec §3.2.5.1.6 Table 3-8).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SubsetDiffIndex {
     /// "span" field: number of devices per index offset.
     pub span: u32,
@@ -236,6 +242,7 @@ pub struct SubsetDiffIndex {
 
 /// Variant Number Record (Common spec §3.2.5.2.2 Table 3-12).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct VariantNumberRecord {
     /// 16-byte nonce.
     pub nonce: [u8; 16],

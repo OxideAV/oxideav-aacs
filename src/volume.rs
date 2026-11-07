@@ -67,6 +67,25 @@ pub struct DeviceKey {
     pub device_node: Option<u32>,
 }
 
+impl DeviceKey {
+    /// Build a device key with no device-node number.
+    pub fn new(key: [u8; 16], uv: u32, u_mask_zero_bits: u8, v_mask_zero_bits: u8) -> Self {
+        DeviceKey {
+            key,
+            uv,
+            u_mask_zero_bits,
+            v_mask_zero_bits,
+            device_node: None,
+        }
+    }
+
+    /// Set the device-node number.
+    pub fn with_device_node(mut self, device_node: u32) -> Self {
+        self.device_node = Some(device_node);
+        self
+    }
+}
+
 /// A 128-bit unwrapped CPS Unit Title Key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TitleKey(pub [u8; 16]);
@@ -75,6 +94,7 @@ pub struct TitleKey(pub [u8; 16]);
 /// key, and (once [`AacsVolume::unwrap_title_keys`] has been called)
 /// the unwrapped title key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct CpsUnit {
     /// 1-based CPS Unit number on disc.
     pub id: u16,
@@ -85,11 +105,23 @@ pub struct CpsUnit {
     pub title_key: Option<TitleKey>,
 }
 
+impl CpsUnit {
+    /// Build a CPS unit whose title key is still wrapped.
+    pub fn new(id: u16, encrypted_title_key: [u8; 16]) -> Self {
+        CpsUnit {
+            id,
+            encrypted_title_key,
+            title_key: None,
+        }
+    }
+}
+
 /// A parsed AACS volume — i.e. a disc whose `AACS/` directory has
 /// been walked. Holds enough state to decrypt any Aligned Unit
 /// belonging to any of its CPS units, once title keys have been
 /// unwrapped via VUK.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct AacsVolume {
     /// Parsed `MKB_RO.inf`.
     pub mkb: Mkb,
@@ -104,6 +136,23 @@ pub struct AacsVolume {
 }
 
 impl AacsVolume {
+    /// Assemble a volume from already-parsed parts, with no CPS-unit
+    /// metadata (see [`Self::with_cps_units`]).
+    pub fn new(mkb: Mkb, unit_key_file: UnitKeyFile, disc_root: impl Into<PathBuf>) -> Self {
+        AacsVolume {
+            mkb,
+            unit_key_file,
+            cps_units: Vec::new(),
+            disc_root: disc_root.into(),
+        }
+    }
+
+    /// Replace the per-CPS-Unit metadata.
+    pub fn with_cps_units(mut self, cps_units: Vec<CpsUnit>) -> Self {
+        self.cps_units = cps_units;
+        self
+    }
+
     /// Open the AACS volume rooted at `disc_root` by parsing
     /// `AACS/MKB_RO.inf` and `AACS/Unit_Key_RO.inf`.
     pub fn open(disc_root: impl AsRef<Path>) -> Result<Self, AacsError> {

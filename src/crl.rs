@@ -213,6 +213,7 @@ pub struct RecordableMediaRevocation {
 /// One Revocation Record decoded from a CRL Segment's Revocation
 /// Record Set (PVB §2.7).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RevocationRecord {
     /// Revocation Record for Content Certificate ID (PVB Table 2-3,
     /// `Record_Type == 0x0`).

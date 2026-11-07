@@ -164,21 +164,13 @@ fn type4_path_applies_kcd_then_verifies_and_derives_vuk() {
     assert!(!mkb.is_verified_media_key(&precursor));
     assert!(mkb.is_verified_media_key(&km));
 
-    let volume = AacsVolume {
+    let volume = AacsVolume::new(
         mkb,
-        unit_key_file: oxideav_aacs::unit_key::UnitKeyFile {
-            unit_key_block_start_address: 0,
-            header: oxideav_aacs::unit_key::UnitKeyFileHeader {
-                application_type: 1,
-                num_of_bd_directory: 1,
-                use_skb_unified_mkb: false,
-                bd_directories: Vec::new(),
-            },
-            cps_units: Vec::new(),
-        },
-        cps_units: Vec::new(),
-        disc_root: std::path::PathBuf::new(),
-    };
+        oxideav_aacs::unit_key::UnitKeyFile::new(oxideav_aacs::unit_key::UnitKeyFileHeader::new(
+            1, 1, false,
+        )),
+        std::path::PathBuf::new(),
+    );
     let volume_id = [0x77u8; 16];
     let vuk = volume
         .derive_vuk_from_device_key_with_kcd(&device, &volume_id, Some(&kcd))
@@ -308,19 +300,11 @@ fn parse_hex_20(s: &str) -> [u8; 20] {
 }
 
 fn volume_around(mkb: Mkb) -> AacsVolume {
-    AacsVolume {
+    AacsVolume::new(
         mkb,
-        unit_key_file: oxideav_aacs::unit_key::UnitKeyFile {
-            unit_key_block_start_address: 0,
-            header: oxideav_aacs::unit_key::UnitKeyFileHeader {
-                application_type: 1,
-                num_of_bd_directory: 1,
-                use_skb_unified_mkb: false,
-                bd_directories: Vec::new(),
-            },
-            cps_units: Vec::new(),
-        },
-        cps_units: Vec::new(),
-        disc_root: std::path::PathBuf::new(),
-    }
+        oxideav_aacs::unit_key::UnitKeyFile::new(oxideav_aacs::unit_key::UnitKeyFileHeader::new(
+            1, 1, false,
+        )),
+        std::path::PathBuf::new(),
+    )
 }

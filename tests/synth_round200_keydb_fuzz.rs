@@ -112,11 +112,7 @@ THIS LINE IS NEITHER A LEGACY ENTRY NOR A PIPE RECORD\n\
 fn is_clean_reflects_any_skip() {
     let mut r = ParseReport::default();
     assert!(r.is_clean());
-    r.skipped.push(SkippedLine {
-        line_number: 7,
-        snippet: "x".into(),
-        reason: "y".into(),
-    });
+    r.skipped.push(SkippedLine::new(7, "x", "y"));
     assert!(!r.is_clean());
     assert_eq!(r.skipped_count(), 1);
 }

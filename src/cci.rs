@@ -63,6 +63,7 @@ const BASIC_CCI_TITLE_BITMAP_BITS: usize = 1024;
 ///
 /// [`as_basic_cci`]: CciAndOtherInfo::as_basic_cci
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct CciAndOtherInfo {
     /// `CCI_and_other_info_type` (Table 3-19).
     pub info_type: u16,
@@ -399,6 +400,7 @@ impl EnhancedTitleUsage {
 
 /// On-line Binding Type (Table 3-32).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum BindingType {
     /// `0x01` — Media Binding.
     Media,
@@ -521,6 +523,7 @@ pub const PRIMARY_CCI_AREA_LEN: usize = 2032;
 /// `2048·N − 16`-byte block region. Trailing reserved padding in each
 /// area is ignored on parse and re-emitted as zeros.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub struct CpsUnitUsageFile {
     /// `CCI_and_other_info()` blocks of the Primary CCI Area.
     pub primary: Vec<CciAndOtherInfo>,
@@ -533,6 +536,17 @@ pub struct CpsUnitUsageFile {
 }
 
 impl CpsUnitUsageFile {
+    /// Build a usage file from its Primary and (optional) Secondary CCI
+    /// Areas. `secondary: None` means "no Secondary Area present".
+    pub fn new(primary: Vec<CciAndOtherInfo>, secondary: Option<Vec<CciAndOtherInfo>>) -> Self {
+        let has_secondary = secondary.is_some();
+        CpsUnitUsageFile {
+            primary,
+            secondary: secondary.unwrap_or_default(),
+            has_secondary,
+        }
+    }
+
     /// Parse a CPS Unit Usage File (Table 3-17).
     pub fn parse(bytes: &[u8]) -> Result<Self, AacsError> {
         if bytes.len() < CCI_AREA_HEADER_LEN + PRIMARY_CCI_AREA_LEN {

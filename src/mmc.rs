@@ -2234,6 +2234,11 @@ impl ScsiResponse {
     pub fn good(data: Vec<u8>) -> Self {
         Self { status: 0x00, data }
     }
+
+    /// Build a response with an explicit SCSI status byte.
+    pub fn new(status: u8, data: Vec<u8>) -> Self {
+        Self { status, data }
+    }
 }
 
 /// Trait implemented by platform-specific SCSI pass-through back-ends.
